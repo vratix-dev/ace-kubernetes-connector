@@ -84,8 +84,9 @@ jobs:
           IMAGE: ${{ steps.image.outputs.name }}
           DIGEST: ${{ steps.build.outputs.digest }}
           PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          body="Preview image for $(git rev-parse --short HEAD): \`$IMAGE@$DIGEST\`
+          body="Preview image for ${HEAD_SHA::7}: \`$IMAGE@$DIGEST\`
 
           \`\`\`sh
           helm upgrade --install ace-preview ./chart/ace-kubernetes-connector -n ace-connectors \\
