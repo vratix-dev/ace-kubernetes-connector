@@ -1,0 +1,931 @@
+{
+  "endpoint": "/api/connectors/kubernetes/{mode}/{connectorId}",
+  "resources": {
+    "pods": {
+      "api": "v1",
+      "namespaced": true
+    },
+    "services": {
+      "api": "v1",
+      "namespaced": true
+    },
+    "endpoints": {
+      "api": "v1",
+      "namespaced": true
+    },
+    "configmaps": {
+      "api": "v1",
+      "namespaced": true
+    },
+    "secrets": {
+      "api": "v1",
+      "namespaced": true
+    },
+    "events": {
+      "api": "v1",
+      "namespaced": true
+    },
+    "persistentvolumeclaims": {
+      "api": "v1",
+      "namespaced": true
+    },
+    "resourcequotas": {
+      "api": "v1",
+      "namespaced": true
+    },
+    "limitranges": {
+      "api": "v1",
+      "namespaced": true
+    },
+    "serviceaccounts": {
+      "api": "v1",
+      "namespaced": true
+    },
+    "deployments": {
+      "api": "apps/v1",
+      "namespaced": true
+    },
+    "replicasets": {
+      "api": "apps/v1",
+      "namespaced": true
+    },
+    "statefulsets": {
+      "api": "apps/v1",
+      "namespaced": true
+    },
+    "daemonsets": {
+      "api": "apps/v1",
+      "namespaced": true
+    },
+    "controllerrevisions": {
+      "api": "apps/v1",
+      "namespaced": true
+    },
+    "jobs": {
+      "api": "batch/v1",
+      "namespaced": true
+    },
+    "cronjobs": {
+      "api": "batch/v1",
+      "namespaced": true
+    },
+    "ingresses": {
+      "api": "networking.k8s.io/v1",
+      "namespaced": true
+    },
+    "networkpolicies": {
+      "api": "networking.k8s.io/v1",
+      "namespaced": true
+    },
+    "endpointslices": {
+      "api": "discovery.k8s.io/v1",
+      "namespaced": true
+    },
+    "horizontalpodautoscalers": {
+      "api": "autoscaling/v2",
+      "namespaced": true
+    },
+    "poddisruptionbudgets": {
+      "api": "policy/v1",
+      "namespaced": true
+    },
+    "roles": {
+      "api": "rbac.authorization.k8s.io/v1",
+      "namespaced": true
+    },
+    "rolebindings": {
+      "api": "rbac.authorization.k8s.io/v1",
+      "namespaced": true
+    },
+    "nodes": {
+      "api": "v1",
+      "namespaced": false
+    },
+    "namespaces": {
+      "api": "v1",
+      "namespaced": false
+    },
+    "persistentvolumes": {
+      "api": "v1",
+      "namespaced": false
+    },
+    "storageclasses": {
+      "api": "storage.k8s.io/v1",
+      "namespaced": false
+    },
+    "clusterroles": {
+      "api": "rbac.authorization.k8s.io/v1",
+      "namespaced": false
+    },
+    "clusterrolebindings": {
+      "api": "rbac.authorization.k8s.io/v1",
+      "namespaced": false
+    },
+    "mutatingwebhookconfigurations": {
+      "api": "admissionregistration.k8s.io/v1",
+      "namespaced": false
+    },
+    "validatingwebhookconfigurations": {
+      "api": "admissionregistration.k8s.io/v1",
+      "namespaced": false
+    }
+  },
+  "scope": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "clusterName": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 253,
+        "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+      },
+      "namespaces": {
+        "minItems": 1,
+        "maxItems": 50,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+        }
+      },
+      "clusterResources": {
+        "default": false,
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "clusterName",
+      "namespaces",
+      "clusterResources"
+    ],
+    "additionalProperties": false
+  },
+  "command": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "oneOf": [
+      {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "read"
+          },
+          "query": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "const": "list"
+                  },
+                  "resource": {
+                    "type": "string",
+                    "enum": [
+                      "pods",
+                      "services",
+                      "endpoints",
+                      "configmaps",
+                      "secrets",
+                      "events",
+                      "persistentvolumeclaims",
+                      "resourcequotas",
+                      "limitranges",
+                      "serviceaccounts",
+                      "deployments",
+                      "replicasets",
+                      "statefulsets",
+                      "daemonsets",
+                      "controllerrevisions",
+                      "jobs",
+                      "cronjobs",
+                      "ingresses",
+                      "networkpolicies",
+                      "endpointslices",
+                      "horizontalpodautoscalers",
+                      "poddisruptionbudgets",
+                      "roles",
+                      "rolebindings",
+                      "nodes",
+                      "namespaces",
+                      "persistentvolumes",
+                      "storageclasses",
+                      "clusterroles",
+                      "clusterrolebindings",
+                      "mutatingwebhookconfigurations",
+                      "validatingwebhookconfigurations"
+                    ]
+                  },
+                  "namespace": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 253,
+                        "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "selector": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "continueToken": {
+                    "type": "string",
+                    "maxLength": 4096
+                  },
+                  "limit": {
+                    "default": 100,
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 200
+                  }
+                },
+                "required": [
+                  "operation",
+                  "resource",
+                  "namespace",
+                  "limit"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "const": "get"
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "resource": {
+                        "type": "string",
+                        "enum": [
+                          "pods",
+                          "services",
+                          "endpoints",
+                          "configmaps",
+                          "secrets",
+                          "events",
+                          "persistentvolumeclaims",
+                          "resourcequotas",
+                          "limitranges",
+                          "serviceaccounts",
+                          "deployments",
+                          "replicasets",
+                          "statefulsets",
+                          "daemonsets",
+                          "controllerrevisions",
+                          "jobs",
+                          "cronjobs",
+                          "ingresses",
+                          "networkpolicies",
+                          "endpointslices",
+                          "horizontalpodautoscalers",
+                          "poddisruptionbudgets",
+                          "roles",
+                          "rolebindings",
+                          "nodes",
+                          "namespaces",
+                          "persistentvolumes",
+                          "storageclasses",
+                          "clusterroles",
+                          "clusterrolebindings",
+                          "mutatingwebhookconfigurations",
+                          "validatingwebhookconfigurations"
+                        ]
+                      },
+                      "namespace": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253,
+                            "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 253,
+                        "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                      }
+                    },
+                    "required": [
+                      "resource",
+                      "namespace",
+                      "name"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "operation",
+                  "ref"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "const": "logs"
+                  },
+                  "namespace": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253,
+                    "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                  },
+                  "pod": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253,
+                    "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                  },
+                  "container": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253,
+                    "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                  },
+                  "previous": {
+                    "default": false,
+                    "type": "boolean"
+                  },
+                  "sinceTime": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "tailLines": {
+                    "default": 150,
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 300
+                  }
+                },
+                "required": [
+                  "operation",
+                  "namespace",
+                  "pod",
+                  "container",
+                  "previous",
+                  "sinceTime",
+                  "tailLines"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "const": "access"
+                  },
+                  "resource": {
+                    "type": "string",
+                    "enum": [
+                      "pods",
+                      "services",
+                      "endpoints",
+                      "configmaps",
+                      "secrets",
+                      "events",
+                      "persistentvolumeclaims",
+                      "resourcequotas",
+                      "limitranges",
+                      "serviceaccounts",
+                      "deployments",
+                      "replicasets",
+                      "statefulsets",
+                      "daemonsets",
+                      "controllerrevisions",
+                      "jobs",
+                      "cronjobs",
+                      "ingresses",
+                      "networkpolicies",
+                      "endpointslices",
+                      "horizontalpodautoscalers",
+                      "poddisruptionbudgets",
+                      "roles",
+                      "rolebindings",
+                      "nodes",
+                      "namespaces",
+                      "persistentvolumes",
+                      "storageclasses",
+                      "clusterroles",
+                      "clusterrolebindings",
+                      "mutatingwebhookconfigurations",
+                      "validatingwebhookconfigurations"
+                    ]
+                  },
+                  "namespace": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 253,
+                        "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "verb": {
+                    "type": "string",
+                    "enum": [
+                      "get",
+                      "list",
+                      "patch",
+                      "create",
+                      "delete"
+                    ]
+                  },
+                  "subresource": {
+                    "type": "string",
+                    "const": "exec"
+                  }
+                },
+                "required": [
+                  "operation",
+                  "resource",
+                  "namespace",
+                  "verb"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "const": "identity"
+                  }
+                },
+                "required": [
+                  "operation"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          }
+        },
+        "required": [
+          "mode",
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "const": "write"
+          },
+          "mutation": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "const": "patch"
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "resource": {
+                        "type": "string",
+                        "enum": [
+                          "pods",
+                          "services",
+                          "endpoints",
+                          "configmaps",
+                          "secrets",
+                          "events",
+                          "persistentvolumeclaims",
+                          "resourcequotas",
+                          "limitranges",
+                          "serviceaccounts",
+                          "deployments",
+                          "replicasets",
+                          "statefulsets",
+                          "daemonsets",
+                          "controllerrevisions",
+                          "jobs",
+                          "cronjobs",
+                          "ingresses",
+                          "networkpolicies",
+                          "endpointslices",
+                          "horizontalpodautoscalers",
+                          "poddisruptionbudgets",
+                          "roles",
+                          "rolebindings",
+                          "nodes",
+                          "namespaces",
+                          "persistentvolumes",
+                          "storageclasses",
+                          "clusterroles",
+                          "clusterrolebindings",
+                          "mutatingwebhookconfigurations",
+                          "validatingwebhookconfigurations"
+                        ]
+                      },
+                      "namespace": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253,
+                            "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 253,
+                        "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                      }
+                    },
+                    "required": [
+                      "resource",
+                      "namespace",
+                      "name"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "uid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "resourceVersion": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "patch": {
+                    "minItems": 1,
+                    "maxItems": 40,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "op": {
+                          "type": "string",
+                          "enum": [
+                            "add",
+                            "remove",
+                            "replace",
+                            "test"
+                          ]
+                        },
+                        "path": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500,
+                          "format": "starts_with",
+                          "pattern": "^\\/.*"
+                        },
+                        "value": {}
+                      },
+                      "required": [
+                        "op",
+                        "path"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "operation",
+                  "ref",
+                  "uid",
+                  "resourceVersion",
+                  "patch"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "const": "delete"
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "resource": {
+                        "type": "string",
+                        "enum": [
+                          "pods",
+                          "services",
+                          "endpoints",
+                          "configmaps",
+                          "secrets",
+                          "events",
+                          "persistentvolumeclaims",
+                          "resourcequotas",
+                          "limitranges",
+                          "serviceaccounts",
+                          "deployments",
+                          "replicasets",
+                          "statefulsets",
+                          "daemonsets",
+                          "controllerrevisions",
+                          "jobs",
+                          "cronjobs",
+                          "ingresses",
+                          "networkpolicies",
+                          "endpointslices",
+                          "horizontalpodautoscalers",
+                          "poddisruptionbudgets",
+                          "roles",
+                          "rolebindings",
+                          "nodes",
+                          "namespaces",
+                          "persistentvolumes",
+                          "storageclasses",
+                          "clusterroles",
+                          "clusterrolebindings",
+                          "mutatingwebhookconfigurations",
+                          "validatingwebhookconfigurations"
+                        ]
+                      },
+                      "namespace": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253,
+                            "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 253,
+                        "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                      }
+                    },
+                    "required": [
+                      "resource",
+                      "namespace",
+                      "name"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "uid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "resourceVersion": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "operation",
+                  "ref",
+                  "uid",
+                  "resourceVersion"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "const": "create"
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "resource": {
+                        "type": "string",
+                        "enum": [
+                          "pods",
+                          "services",
+                          "endpoints",
+                          "configmaps",
+                          "secrets",
+                          "events",
+                          "persistentvolumeclaims",
+                          "resourcequotas",
+                          "limitranges",
+                          "serviceaccounts",
+                          "deployments",
+                          "replicasets",
+                          "statefulsets",
+                          "daemonsets",
+                          "controllerrevisions",
+                          "jobs",
+                          "cronjobs",
+                          "ingresses",
+                          "networkpolicies",
+                          "endpointslices",
+                          "horizontalpodautoscalers",
+                          "poddisruptionbudgets",
+                          "roles",
+                          "rolebindings",
+                          "nodes",
+                          "namespaces",
+                          "persistentvolumes",
+                          "storageclasses",
+                          "clusterroles",
+                          "clusterrolebindings",
+                          "mutatingwebhookconfigurations",
+                          "validatingwebhookconfigurations"
+                        ]
+                      },
+                      "namespace": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 253,
+                            "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 253,
+                        "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                      }
+                    },
+                    "required": [
+                      "resource",
+                      "namespace",
+                      "name"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "manifest": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  }
+                },
+                "required": [
+                  "operation",
+                  "ref",
+                  "manifest"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "const": "exec"
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "resource": {
+                        "type": "string",
+                        "const": "pods"
+                      },
+                      "namespace": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 253,
+                        "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 253,
+                        "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                      }
+                    },
+                    "required": [
+                      "resource",
+                      "namespace",
+                      "name"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "uid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "container": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253,
+                    "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                  },
+                  "argv": {
+                    "minItems": 1,
+                    "maxItems": 30,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 4000
+                    }
+                  }
+                },
+                "required": [
+                  "operation",
+                  "ref",
+                  "uid",
+                  "container",
+                  "argv"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "dryRun": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "mode",
+          "mutation",
+          "dryRun"
+        ],
+        "additionalProperties": false
+      }
+    ]
+  },
+  "result": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "observedAt": {
+        "type": "string",
+        "format": "date-time",
+        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+      },
+      "data": {},
+      "truncated": {
+        "type": "boolean"
+      },
+      "error": {
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "forbidden",
+              "not_found",
+              "conflict",
+              "throttled",
+              "unavailable",
+              "invalid",
+              "ambiguous"
+            ]
+          },
+          {
+            "type": "null"
+          }
+        ]
+      }
+    },
+    "required": [
+      "observedAt",
+      "data",
+      "truncated",
+      "error"
+    ],
+    "additionalProperties": false
+  }
+}

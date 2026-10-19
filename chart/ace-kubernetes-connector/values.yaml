@@ -1,0 +1,31 @@
+# Ace shows the values for your connection during setup.
+
+# Connector ID issued by Ace.
+connectorId: ""
+# read: get/list in the selected namespaces, no Secret access.
+# write: broad namespace access for approved changes. Install it as a separate release.
+mode: read
+# HTTPS origin of your Ace installation, without a path.
+apiUrl: ""
+# Display name of this cluster in Ace.
+clusterName: ""
+# Namespaces the connector may access.
+namespaces: []
+# Also grant cluster-scoped access (read: nodes, namespaces, storage, RBAC and
+# admission webhooks; write: every API group and verb).
+clusterResources: false
+
+image:
+  repository: ghcr.io/vratix-dev/ace-kubernetes-connector
+  # Released charts set the digest of the image they were tested with.
+  digest: ""
+
+# Names of existing registry Secrets in the release namespace.
+imagePullSecrets: []
+
+# The Ace connector credential. Prefer existingSecret: the name of a Secret in
+# the release namespace with the credential under the key "token".
+existingSecret: ""
+# Alternatively pass the credential with --set-file token=PATH. Helm then
+# stores it in the release record.
+token: ""

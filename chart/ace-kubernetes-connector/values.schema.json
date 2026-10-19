@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "connectorId",
+    "mode",
+    "apiUrl",
+    "clusterName",
+    "namespaces",
+    "clusterResources",
+    "image"
+  ],
+  "properties": {
+    "global": {
+      "type": "object"
+    },
+    "connectorId": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+      "description": "Connector ID issued by Ace."
+    },
+    "mode": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write"
+      ]
+    },
+    "apiUrl": {
+      "type": "string",
+      "pattern": "^https://[^/?#@\\s]+/?$",
+      "description": "HTTPS origin of the Ace installation, without a path, query or credentials."
+    },
+    "clusterName": {
+      "$ref": "#/definitions/name"
+    },
+    "namespaces": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/definitions/name"
+      }
+    },
+    "clusterResources": {
+      "type": "boolean"
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "digest"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "maxLength": 400,
+          "pattern": "^[a-zA-Z0-9][a-zA-Z0-9.-]*(:[0-9]{1,5})?(/[a-z0-9]+([._-][a-z0-9]+)*)+$",
+          "description": "Image repository without tag or digest, for example ghcr.io/vratix-dev/ace-kubernetes-connector."
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$",
+          "description": "Immutable image digest. Mutable tags are not accepted."
+        }
+      }
+    },
+    "imagePullSecrets": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/definitions/name"
+      }
+    },
+    "existingSecret": {
+      "type": "string",
+      "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$",
+      "maxLength": 253
+    },
+    "token": {
+      "type": "string",
+      "maxLength": 200
+    }
+  },
+  "definitions": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 253,
+      "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+    }
+  }
+}
