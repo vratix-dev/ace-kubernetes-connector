@@ -1,0 +1,92 @@
+{{- $name := include "connector.name" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+    spec:
+      serviceAccountName: {{ $name }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range . }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: connector
+          image: "{{ .Values.image.repository }}@{{ .Values.image.digest }}"
+          imagePullPolicy: IfNotPresent
+          startupProbe:
+            exec:
+              command: [node, src/health.cjs, alive]
+            periodSeconds: 5
+            failureThreshold: 24
+          livenessProbe:
+            exec:
+              command: [node, src/health.cjs, alive]
+            periodSeconds: 30
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command: [node, src/health.cjs, ready]
+            periodSeconds: 15
+            failureThreshold: 2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          env:
+            - name: ACE_API_URL
+              value: {{ .Values.apiUrl | quote }}
+            - name: ACE_CONNECTOR_ID
+              value: {{ .Values.connectorId | quote }}
+            - name: ACE_CONNECTOR_MODE
+              value: {{ .Values.mode | quote }}
+            - name: ACE_CLUSTER_NAME
+              value: {{ .Values.clusterName | quote }}
+            - name: ACE_NAMESPACES
+              value: {{ join "," .Values.namespaces | quote }}
+            - name: ACE_CLUSTER_RESOURCES
+              value: {{ .Values.clusterResources | toString | quote }}
+            - name: ACE_CONNECTOR_TOKEN_FILE
+              value: /var/run/ace/token
+            - name: TSX_DISABLE_CACHE
+              value: "1"
+          volumeMounts:
+            - name: credentials
+              mountPath: /var/run/ace
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: credentials
+          secret:
+            secretName: {{ include "connector.secretName" . }}
+            defaultMode: 288
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi

@@ -1,0 +1,130 @@
+name: Release
+on:
+  push:
+    tags: ['v*.*.*']
+permissions:
+  contents: read
+concurrency:
+  group: release
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check that the tag matches the package and chart versions
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          test "$(jq -r .version package.json)" = "$version"
+          test "$(yq .version chart/ace-kubernetes-connector/Chart.yaml)" = "$version"
+          test "$(yq .appVersion chart/ace-kubernetes-connector/Chart.yaml)" = "$version"
+      - id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        id: build
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          tags: ${{ steps.image.outputs.name }}:candidate-${{ github.sha }}-${{ matrix.arch }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ github.ref_name }}
+      - name: Scan the exact candidate, including unfixed high and critical vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/${{ matrix.arch }}
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image-ref: ${{ steps.image.outputs.name }}@${{ steps.build.outputs.digest }}
+          format: json
+          output: scan-${{ matrix.arch }}.json
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          ignore-unfixed: false
+      - name: Retain the scanned digest
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          ARCH: ${{ matrix.arch }}
+        run: printf '%s@%s\n' "$IMAGE" "$DIGEST" > "digest-$ARCH.txt"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: connector-${{ matrix.arch }}
+          path: |
+            scan-${{ matrix.arch }}.json
+            digest-${{ matrix.arch }}.txt
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: connector-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Promote only the scanned images
+        id: promote
+        shell: bash
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          version="${GITHUB_REF_NAME#v}"
+          docker buildx imagetools create --tag "$image:$version" "$(cat digest-amd64.txt)" "$(cat digest-arm64.txt)"
+          digest="$(docker buildx imagetools inspect "$image:$version" --format '{{.Manifest.Digest}}')"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Publish the chart with the released image digest
+        env:
+          DIGEST: ${{ steps.promote.outputs.digest }}
+        run: |
+          yq -i '.image.digest = strenv(DIGEST)' chart/ace-kubernetes-connector/values.yaml
+          helm package chart/ace-kubernetes-connector
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
+          helm push "ace-kubernetes-connector-${GITHUB_REF_NAME#v}.tgz" "oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts"
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.promote.outputs.image }}
+          DIGEST: ${{ steps.promote.outputs.digest }}
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          notes="Image: \`$IMAGE@$DIGEST\`
+          Chart: \`oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts/ace-kubernetes-connector\` version \`$version\`"
+          echo "$notes" >> "$GITHUB_STEP_SUMMARY"
+          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "$notes" --verify-tag \
+            "ace-kubernetes-connector-$version.tgz" scan-amd64.json scan-arm64.json
