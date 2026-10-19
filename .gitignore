@@ -1,0 +1,5 @@
+node_modules/
+*.tgz
+*.token
+.DS_Store
+.claude/
