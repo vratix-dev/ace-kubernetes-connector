@@ -2,7 +2,8 @@ import { redactSensitiveText } from './redact'
 
 const sensitive = /password|passwd|secret|token|credential|private.?key|authorization|cookie|connection.?string/i
 const omitted = new Set(['managedFields', 'kubectl.kubernetes.io/last-applied-configuration'])
-export const retainedAnnotations = ['deployment.kubernetes.io/revision', 'kubectl.kubernetes.io/restartedAt']
+// Revisions and restarts, plus the GitOps ownership and rollout revision Ace needs to tell who reconciles an object.
+export const retainedAnnotations = ['deployment.kubernetes.io/revision', 'kubectl.kubernetes.io/restartedAt', 'argocd.argoproj.io/tracking-id', 'rollout.argoproj.io/revision']
 
 // Secret volume sources name a Secret; the names explain stale-credential
 // incidents without disclosing values. Other fields under them stay sanitized.

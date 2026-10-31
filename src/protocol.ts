@@ -36,7 +36,14 @@ export const kubernetesResources = {
   clusterrolebindings: { api: 'rbac.authorization.k8s.io/v1', namespaced: false },
   mutatingwebhookconfigurations: { api: 'admissionregistration.k8s.io/v1', namespaced: false },
   validatingwebhookconfigurations: { api: 'admissionregistration.k8s.io/v1', namespaced: false },
+  // Allowlisted custom resources: GitOps controllers and progressive delivery. Absent when their CRD is not installed.
+  applications: { api: 'argoproj.io/v1alpha1', namespaced: true },
+  rollouts: { api: 'argoproj.io/v1alpha1', namespaced: true },
+  kustomizations: { api: 'kustomize.toolkit.fluxcd.io/v1', namespaced: true },
+  helmreleases: { api: 'helm.toolkit.fluxcd.io/v2', namespaced: true },
 } as const
+/** The custom resources above, each reported as a capability only when its API is served by the cluster. */
+export const customResources = ['applications', 'rollouts', 'kustomizations', 'helmreleases'] as const
 export const kubernetesResourceSchema = z.enum(Object.keys(kubernetesResources) as [keyof typeof kubernetesResources, ...Array<keyof typeof kubernetesResources>])
 export const kubernetesRefSchema = z.object({ resource: kubernetesResourceSchema, namespace: name.nullable(), name }).strict()
 export type KubernetesRef = z.infer<typeof kubernetesRefSchema>
@@ -44,15 +51,18 @@ export const kubernetesReadSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('list'), resource: kubernetesResourceSchema, namespace: name.nullable(), selector: z.string().max(500).optional(), continueToken: z.string().max(4096).optional(), limit: z.number().int().min(1).max(200).default(100) }).strict(),
   z.object({ operation: z.literal('get'), ref: kubernetesRefSchema }).strict(),
   z.object({ operation: z.literal('logs'), namespace: name, pod: name, container: name, previous: z.boolean().default(false), sinceTime: z.string().datetime({ offset: true }), tailLines: z.number().int().min(1).max(300).default(150) }).strict(),
-  z.object({ operation: z.literal('access'), resource: kubernetesResourceSchema, namespace: name.nullable(), verb: z.enum(['get', 'list', 'patch', 'create', 'delete']), subresource: z.literal('exec').optional() }).strict(),
+  z.object({ operation: z.literal('access'), resource: kubernetesResourceSchema, namespace: name.nullable(), verb: z.enum(['get', 'list', 'patch', 'create', 'delete']), subresource: z.enum(['exec', 'eviction', 'status']).optional() }).strict(),
   z.object({ operation: z.literal('identity') }).strict(),
 ])
 export type KubernetesRead = z.infer<typeof kubernetesReadSchema>
 const patch = z.object({ op: z.enum(['add', 'remove', 'replace', 'test']), path: z.string().min(1).max(500).startsWith('/'), value: z.unknown().optional() }).strict().refine(item => item.op === 'remove' || Object.hasOwn(item, 'value'), 'This patch operation requires a value.')
 export const kubernetesMutationSchema = z.discriminatedUnion('operation', [
-  z.object({ operation: z.literal('patch'), ref: kubernetesRefSchema, uid: z.string().min(1).max(200), resourceVersion: z.string().min(1).max(200), patch: z.array(patch).min(1).max(40) }).strict(),
+  // subresource "status" patches the status of a resource whose CRD enables it (an Argo Rollout's abort or promote).
+  z.object({ operation: z.literal('patch'), ref: kubernetesRefSchema, uid: z.string().min(1).max(200), resourceVersion: z.string().min(1).max(200), patch: z.array(patch).min(1).max(40), subresource: z.literal('status').optional() }).strict(),
   z.object({ operation: z.literal('delete'), ref: kubernetesRefSchema, uid: z.string().min(1).max(200), resourceVersion: z.string().min(1).max(200) }).strict(),
   z.object({ operation: z.literal('create'), ref: kubernetesRefSchema, manifest: z.record(z.string(), z.unknown()) }).strict(),
+  // The Eviction API: the API server refuses (429) an eviction a PodDisruptionBudget does not allow.
+  z.object({ operation: z.literal('evict'), ref: kubernetesRefSchema.extend({ resource: z.literal('pods'), namespace: name }), uid: z.string().min(1).max(200) }).strict(),
   z.object({ operation: z.literal('exec'), ref: kubernetesRefSchema.extend({ resource: z.literal('pods'), namespace: name }), uid: z.string().min(1).max(200), container: name, argv: z.array(z.string().min(1).max(4000)).min(1).max(30) }).strict(),
 ])
 export type KubernetesMutation = z.infer<typeof kubernetesMutationSchema>
@@ -74,6 +84,18 @@ export const connectorResultSchema = z.object({
   error: z.enum(['forbidden', 'not_found', 'conflict', 'throttled', 'unavailable', 'invalid', 'ambiguous']).nullable(),
 }).strict()
 export type ConnectorResult = z.infer<typeof connectorResultSchema>
+
+/**
+ * What this connector can do, sent with every poll. Ace sends a command that needs a feature only to a connector
+ * reporting it, so older connectors never receive commands they cannot parse. Custom resources are reported by
+ * name when the cluster serves their API.
+ */
+export const connectorFeatures = ['eviction', 'status_patch', ...customResources] as const
+export const connectorHeartbeatSchema = z.object({
+  version: z.string().regex(/^\d+\.\d+\.\d+$/),
+  features: z.array(z.enum(connectorFeatures)).max(20),
+}).strict()
+export type ConnectorHeartbeat = z.infer<typeof connectorHeartbeatSchema>
 
 export function resourcePath(ref: { resource: keyof typeof kubernetesResources; namespace: string | null; name?: string }): string {
   const spec = kubernetesResources[ref.resource]

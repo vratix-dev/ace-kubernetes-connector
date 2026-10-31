@@ -25,7 +25,7 @@
 {{- end -}}
 {{- end -}}
 
-{{/* Namespaced read access: every supported namespaced resource except Secrets, plus pod logs. */}}
+{{/* Namespaced read access: every supported namespaced resource except Secrets, plus pod logs. Rules for an absent CRD grant nothing. */}}
 {{- define "connector.readRules" -}}
 - apiGroups: [""]
   resources: [pods, services, endpoints, configmaps, events, persistentvolumeclaims, resourcequotas, limitranges, serviceaccounts, pods/log]
@@ -50,6 +50,15 @@
   verbs: [get, list]
 - apiGroups: [rbac.authorization.k8s.io]
   resources: [roles, rolebindings]
+  verbs: [get, list]
+- apiGroups: [argoproj.io]
+  resources: [applications, rollouts]
+  verbs: [get, list]
+- apiGroups: [kustomize.toolkit.fluxcd.io]
+  resources: [kustomizations]
+  verbs: [get, list]
+- apiGroups: [helm.toolkit.fluxcd.io]
+  resources: [helmreleases]
   verbs: [get, list]
 {{- end -}}
 

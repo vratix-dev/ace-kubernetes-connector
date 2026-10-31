@@ -28,11 +28,15 @@ async function main() {
   }
   process.once('SIGTERM', () => shutdown.abort())
   process.once('SIGINT', () => shutdown.abort())
+  // Reported with every poll; refreshed every ten minutes so a CRD installed later is picked up.
+  let heartbeat = await client.capabilities()
+  const refresh = setInterval(() => { void client.capabilities().then(value => { heartbeat = value }, () => {}) }, 600_000)
+  refresh.unref()
   let connectedAt = 0, healthy = true
   let healthUpdate = Promise.resolve()
   const worker = runConnectorWorker({
     signal: shutdown.signal,
-    poll: async () => { const response = await send({ operation: 'poll' }); return response.data ? leaseSchema.parse(response.data) : null },
+    poll: async () => { const response = await send({ operation: 'poll', capabilities: heartbeat }); return response.data ? leaseSchema.parse(response.data) : null },
     execute: command => client.run(command),
     complete: async (lease, result) => { await send({ operation: 'complete', id: lease.id, leaseId: lease.leaseId, result }) },
     health: connected => {

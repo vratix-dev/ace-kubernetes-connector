@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { connectorResultSchema, connectorScopeSchema, kubernetesCommandSchema, kubernetesResources } from './protocol'
+import { connectorHeartbeatSchema, connectorResultSchema, connectorScopeSchema, kubernetesCommandSchema, kubernetesResources } from './protocol'
 
 /** The parts of the protocol both sides must agree on, as plain JSON. */
 export function protocolContract() {
@@ -9,5 +9,6 @@ export function protocolContract() {
     scope: z.toJSONSchema(connectorScopeSchema),
     command: z.toJSONSchema(kubernetesCommandSchema),
     result: z.toJSONSchema(connectorResultSchema),
+    heartbeat: z.toJSONSchema(connectorHeartbeatSchema),
   }
 }

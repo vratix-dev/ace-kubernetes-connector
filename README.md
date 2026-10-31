@@ -3,7 +3,10 @@
 The connector runs inside your cluster and lets Ace inspect the namespaces you choose. It opens outbound HTTPS connections to your Ace installation. No inbound port, exposed Kubernetes API or uploaded kubeconfig is needed.
 
 - **Reader:** get/list on supported resources and container logs in the selected namespaces. It cannot read Secret values. Cluster-scoped reads (nodes, namespaces, storage, RBAC and admission webhooks) are optional.
-- **Writer (optional):** a separate release with its own credential and broad access within the selected namespaces, or optionally the whole cluster, used only for changes you approve in Ace.
+- **Writer (optional):** a separate release with its own credential and broad access within the selected namespaces, or optionally the whole cluster, used only for changes you approve in Ace. This includes pod evictions through the Eviction API, which respects PodDisruptionBudgets, and status patches of custom resources (an Argo Rollout's abort or promote).
+- **GitOps and progressive delivery:** the reader also gets and lists Argo CD `Application`, Argo Rollouts `Rollout` and Flux `Kustomization`/`HelmRelease` objects in the selected namespaces when those CRDs are installed. Include the namespace your Argo CD Applications or Flux objects live in (for example `argocd` or `flux-system`) to let Ace see and, with the writer, act on them.
+
+Every poll reports the connector version and the features it supports, including which of those custom resources the cluster serves. Ace sends a command only to a connector that reports what it needs, so mixed versions are safe. Upgrade Ace before installing a connector release that adds features.
 
 Results are bounded and pass through redaction before they leave the cluster. Kubernetes credentials stay in the cluster.
 
@@ -16,7 +19,7 @@ kubectl create namespace ace-connectors
 # The credential comes from a file downloaded during setup, so it never appears in shell history.
 kubectl -n ace-connectors create secret generic ace-read-0123abcd --from-file=token=ace-read-0123abcd.token
 helm upgrade --install ace-read-0123abcd oci://ghcr.io/vratix-dev/charts/ace-kubernetes-connector \
-  --version 0.1.0 --namespace ace-connectors \
+  --version 0.2.0 --namespace ace-connectors \
   --set connectorId=0123abcd-... --set mode=read --set apiUrl=https://ace.example.com \
   --set clusterName=production --set 'namespaces={checkout,billing}' \
   --set existingSecret=ace-read-0123abcd
@@ -44,7 +47,7 @@ The pod runs as a non-root user with a read-only root filesystem, no privilege e
 ### Rotate, upgrade or remove
 
 - **Rotate the credential:** replace the Secret contents. The connector rereads its token file, so it needs no restart.
-- **Upgrade:** run `helm upgrade` with the new chart version. Reader and writer versions should move together.
+- **Upgrade:** run `helm upgrade` with the new chart version. Reader and writer versions should move together. A newly installed CRD is picked up within ten minutes, or on restart.
 - **Remove:** disconnect in Ace first, then `helm uninstall <release> -n ace-connectors` and delete the credential Secret.
 
 ## Images and charts
@@ -70,7 +73,7 @@ npm test
 
 ### Release
 
-1. Set the same version in `package.json`, and `version` and `appVersion` in `chart/ace-kubernetes-connector/Chart.yaml`.
+1. Set the same version in `package.json`, `connectorVersion` in `src/client.ts`, and `version` and `appVersion` in `chart/ace-kubernetes-connector/Chart.yaml`.
 2. Merge to `main`, then push a tag such as `v0.2.0`.
 
 The release workflow builds and scans both architectures, publishes the image, writes the image digest into the chart, pushes the chart to GHCR and creates a GitHub release that lists the digest.

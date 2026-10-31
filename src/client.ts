@@ -2,12 +2,15 @@ import https from 'node:https'
 import http from 'node:http'
 import { Writable } from 'node:stream'
 import { Exec, KubeConfig } from '@kubernetes/client-node'
-import { assertConnectorScope, kubernetesResources, resourcePath, type ConnectorResult, type ConnectorScope, type KubernetesCommand } from './protocol'
+import { assertConnectorScope, customResources, kubernetesResources, resourcePath, type ConnectorHeartbeat, type ConnectorResult, type ConnectorScope, type KubernetesCommand } from './protocol'
 import { sanitizeKubernetes, kubernetesPayloadTruncated } from './sanitize'
 
 class ApiFailure extends Error {
   constructor(readonly status: number) { super(`Kubernetes API returned ${status}.`) }
 }
+
+/** The release this connector reports in its heartbeat; the release workflow checks it against package.json and the chart. */
+export const connectorVersion = '0.2.0'
 
 /** Executes scoped commands against the local Kubernetes API. */
 export class KubernetesConnectorClient {
@@ -51,7 +54,7 @@ export class KubernetesConnectorClient {
     const path = resourcePath(mutation.ref)
     const suffix = command.dryRun ? '?dryRun=All' : ''
     if (mutation.operation === 'patch') {
-      return this.request(path + suffix, 'PATCH', [
+      return this.request(path + (mutation.subresource ? `/${mutation.subresource}` : '') + suffix, 'PATCH', [
         { op: 'test', path: '/metadata/uid', value: mutation.uid },
         { op: 'test', path: '/metadata/resourceVersion', value: mutation.resourceVersion },
         ...mutation.patch,
@@ -60,6 +63,10 @@ export class KubernetesConnectorClient {
     if (mutation.operation === 'delete') return this.request(path + suffix, 'DELETE', {
       apiVersion: 'v1', kind: 'DeleteOptions', propagationPolicy: 'Foreground',
       preconditions: { uid: mutation.uid, resourceVersion: mutation.resourceVersion },
+    }, { 'Content-Type': 'application/json' })
+    if (mutation.operation === 'evict') return this.request(`${path}/eviction${suffix}`, 'POST', {
+      apiVersion: 'policy/v1', kind: 'Eviction', metadata: { name: mutation.ref.name, namespace: mutation.ref.namespace },
+      deleteOptions: { preconditions: { uid: mutation.uid } },
     }, { 'Content-Type': 'application/json' })
     if (mutation.operation === 'create') {
       const metadata = mutation.manifest.metadata as { name?: string; namespace?: string } | undefined
@@ -83,6 +90,21 @@ export class KubernetesConnectorClient {
         value.on('close', () => { clearTimeout(timer); if (!finished) reject(new Error('Container command outcome is unknown.')) })
       }, () => { clearTimeout(timer); reject(new Error('Container command outcome is unknown.')) })
     })
+  }
+
+  /**
+   * The heartbeat's capabilities: eviction and status patches, which this release implements, and each allowlisted
+   * custom resource whose API group version the cluster serves. API discovery needs no RBAC grant beyond the
+   * default system:discovery role.
+   */
+  async capabilities(): Promise<ConnectorHeartbeat> {
+    const served = await Promise.all(customResources.map(async resource => {
+      try {
+        const list = await this.request(`/apis/${kubernetesResources[resource].api}`) as { resources?: Array<{ name?: string }> }
+        return list.resources?.some(item => item.name === resource) ? [resource] : []
+      } catch { return [] }
+    }))
+    return { version: connectorVersion, features: ['eviction', 'status_patch', ...served.flat()] }
   }
 
   async run(command: KubernetesCommand): Promise<ConnectorResult> {

@@ -128,6 +128,22 @@
     "validatingwebhookconfigurations": {
       "api": "admissionregistration.k8s.io/v1",
       "namespaced": false
+    },
+    "applications": {
+      "api": "argoproj.io/v1alpha1",
+      "namespaced": true
+    },
+    "rollouts": {
+      "api": "argoproj.io/v1alpha1",
+      "namespaced": true
+    },
+    "kustomizations": {
+      "api": "kustomize.toolkit.fluxcd.io/v1",
+      "namespaced": true
+    },
+    "helmreleases": {
+      "api": "helm.toolkit.fluxcd.io/v2",
+      "namespaced": true
     }
   },
   "scope": {
@@ -216,7 +232,11 @@
                       "clusterroles",
                       "clusterrolebindings",
                       "mutatingwebhookconfigurations",
-                      "validatingwebhookconfigurations"
+                      "validatingwebhookconfigurations",
+                      "applications",
+                      "rollouts",
+                      "kustomizations",
+                      "helmreleases"
                     ]
                   },
                   "namespace": {
@@ -299,7 +319,11 @@
                           "clusterroles",
                           "clusterrolebindings",
                           "mutatingwebhookconfigurations",
-                          "validatingwebhookconfigurations"
+                          "validatingwebhookconfigurations",
+                          "applications",
+                          "rollouts",
+                          "kustomizations",
+                          "helmreleases"
                         ]
                       },
                       "namespace": {
@@ -429,7 +453,11 @@
                       "clusterroles",
                       "clusterrolebindings",
                       "mutatingwebhookconfigurations",
-                      "validatingwebhookconfigurations"
+                      "validatingwebhookconfigurations",
+                      "applications",
+                      "rollouts",
+                      "kustomizations",
+                      "helmreleases"
                     ]
                   },
                   "namespace": {
@@ -457,7 +485,11 @@
                   },
                   "subresource": {
                     "type": "string",
-                    "const": "exec"
+                    "enum": [
+                      "exec",
+                      "eviction",
+                      "status"
+                    ]
                   }
                 },
                 "required": [
@@ -543,7 +575,11 @@
                           "clusterroles",
                           "clusterrolebindings",
                           "mutatingwebhookconfigurations",
-                          "validatingwebhookconfigurations"
+                          "validatingwebhookconfigurations",
+                          "applications",
+                          "rollouts",
+                          "kustomizations",
+                          "helmreleases"
                         ]
                       },
                       "namespace": {
@@ -614,6 +650,10 @@
                       ],
                       "additionalProperties": false
                     }
+                  },
+                  "subresource": {
+                    "type": "string",
+                    "const": "status"
                   }
                 },
                 "required": [
@@ -669,7 +709,11 @@
                           "clusterroles",
                           "clusterrolebindings",
                           "mutatingwebhookconfigurations",
-                          "validatingwebhookconfigurations"
+                          "validatingwebhookconfigurations",
+                          "applications",
+                          "rollouts",
+                          "kustomizations",
+                          "helmreleases"
                         ]
                       },
                       "namespace": {
@@ -762,7 +806,11 @@
                           "clusterroles",
                           "clusterrolebindings",
                           "mutatingwebhookconfigurations",
-                          "validatingwebhookconfigurations"
+                          "validatingwebhookconfigurations",
+                          "applications",
+                          "rollouts",
+                          "kustomizations",
+                          "helmreleases"
                         ]
                       },
                       "namespace": {
@@ -804,6 +852,53 @@
                   "operation",
                   "ref",
                   "manifest"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "operation": {
+                    "type": "string",
+                    "const": "evict"
+                  },
+                  "ref": {
+                    "type": "object",
+                    "properties": {
+                      "resource": {
+                        "type": "string",
+                        "const": "pods"
+                      },
+                      "namespace": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 253,
+                        "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 253,
+                        "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
+                      }
+                    },
+                    "required": [
+                      "resource",
+                      "namespace",
+                      "name"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "uid": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "operation",
+                  "ref",
+                  "uid"
                 ],
                 "additionalProperties": false
               },
@@ -925,6 +1020,36 @@
       "data",
       "truncated",
       "error"
+    ],
+    "additionalProperties": false
+  },
+  "heartbeat": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+      "version": {
+        "type": "string",
+        "pattern": "^\\d+\\.\\d+\\.\\d+$"
+      },
+      "features": {
+        "maxItems": 20,
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "eviction",
+            "status_patch",
+            "applications",
+            "rollouts",
+            "kustomizations",
+            "helmreleases"
+          ]
+        }
+      }
+    },
+    "required": [
+      "version",
+      "features"
     ],
     "additionalProperties": false
   }
