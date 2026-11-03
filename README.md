@@ -7,7 +7,7 @@ The connector runs inside your cluster and lets Ace inspect the namespaces you c
 - **GitOps and progressive delivery:** the reader also gets and lists Argo CD `Application`, Argo Rollouts `Rollout` and Flux `Kustomization`/`HelmRelease` objects in the selected namespaces when those CRDs are installed. Include the namespace your Argo CD Applications or Flux objects live in (for example `argocd` or `flux-system`) to let Ace see and, with the writer, act on them.
   - **These objects reach beyond their namespace.** Scope is checked on the object's own namespace, so a writer that can change an `Application`, `Kustomization` or `HelmRelease` can affect the workloads it manages in other namespaces. Deleting an Application with a cascade finalizer deletes those workloads. Only give the writer these namespaces if that reach is acceptable.
 
-Every poll reports the connector version and the features it supports, including which of those custom resources the cluster serves. Ace requires this report and supports only the connector version it pins, so upgrade the connector and Ace together.
+Every poll reports the connector version and the features it supports, including which of those custom resources the cluster serves. Ace requires this report and works with every version on its supported list, using only the features each one reports. A version not on the list is refused with a clear reason.
 
 Results are bounded and pass through redaction before they leave the cluster. Helm values, Flux substitutions and inline Kustomize patches keep their structure but not their values. Other configuration, such as ConfigMap data, is redacted by key name and known credential formats, so a credential under an unremarkable key can still leave the cluster: keep credentials in Secrets. Kubernetes credentials stay in the cluster.
 
@@ -48,7 +48,7 @@ The pod runs as a non-root user with a read-only root filesystem, no privilege e
 ### Rotate, upgrade or remove
 
 - **Rotate the credential:** replace the Secret contents. The connector rereads its token file, so it needs no restart.
-- **Upgrade:** run `helm upgrade` with the new chart version. Reader and writer versions should move together. A newly installed CRD is picked up within a minute.
+- **Upgrade:** run `helm upgrade` with the new chart version, on the reader and writer. A supported older version keeps working until you do. A newly installed CRD is picked up within a minute.
 - **Remove:** disconnect in Ace first, then `helm uninstall <release> -n ace-connectors` and delete the credential Secret.
 
 ## Images and charts
