@@ -2,11 +2,15 @@ import https from 'node:https'
 import http from 'node:http'
 import { Writable } from 'node:stream'
 import { Exec, KubeConfig } from '@kubernetes/client-node'
-import { assertConnectorScope, customResources, kubernetesResources, resourcePath, type ConnectorHeartbeat, type ConnectorResult, type ConnectorScope, type KubernetesCommand } from './protocol'
+import { assertConnectorScope, customResources, kubernetesResources, resourcePath, type ConnectorHeartbeat, type ConnectorResult, type ConnectorScope, type CustomResource, type KubernetesCommand } from './protocol'
 import { sanitizeKubernetes, kubernetesPayloadTruncated } from './sanitize'
 
 class ApiFailure extends Error {
   constructor(readonly status: number) { super(`Kubernetes API returned ${status}.`) }
+}
+
+class ResponseTooLarge extends Error {
+  constructor() { super('Kubernetes response exceeded the byte limit.') }
 }
 
 /** The release this connector reports in its heartbeat; the release workflow checks it against package.json and the chart. */
@@ -14,6 +18,8 @@ export const connectorVersion = '0.2.0'
 
 /** Executes scoped commands against the local Kubernetes API. */
 export class KubernetesConnectorClient {
+  private readonly served = new Set<CustomResource>()
+
   constructor(private readonly kube: KubeConfig, readonly scope: ConnectorScope, readonly mode: 'read' | 'write') {}
 
   private async request(path: string, method = 'GET', body?: unknown, headers: Record<string, string> = {}): Promise<unknown> {
@@ -32,7 +38,7 @@ export class KubernetesConnectorClient {
         const chunks: Buffer[] = []; let bytes = 0
         response.on('data', chunk => {
           bytes += chunk.length
-          if (bytes > 2_000_000) { response.destroy(); reject(new Error('Kubernetes response exceeded the byte limit.')); return }
+          if (bytes > 2_000_000) { response.destroy(); reject(new ResponseTooLarge()); return }
           chunks.push(Buffer.from(chunk))
         })
         response.on('error', reject)
@@ -93,18 +99,35 @@ export class KubernetesConnectorClient {
   }
 
   /**
-   * The heartbeat's capabilities: eviction and status patches, which this release implements, and each allowlisted
-   * custom resource whose API group version the cluster serves. API discovery needs no RBAC grant beyond the
-   * default system:discovery role.
+   * The heartbeat's capabilities: eviction and status patches on a writer, and each allowlisted custom resource whose
+   * API group version the cluster serves. Only a 404 or a missing resource means not served; any other failure says
+   * nothing about the cluster, so the last answer stands. API discovery needs no RBAC grant beyond the default
+   * system:discovery role.
    */
   async capabilities(): Promise<ConnectorHeartbeat> {
-    const served = await Promise.all(customResources.map(async resource => {
+    await Promise.all(customResources.map(async resource => {
       try {
         const list = await this.request(`/apis/${kubernetesResources[resource].api}`) as { resources?: Array<{ name?: string }> }
-        return list.resources?.some(item => item.name === resource) ? [resource] : []
-      } catch { return [] }
+        if (list.resources?.some(item => item.name === resource)) this.served.add(resource)
+        else this.served.delete(resource)
+      } catch (error) {
+        if (error instanceof ApiFailure && error.status === 404) this.served.delete(resource)
+      }
     }))
-    return { version: connectorVersion, features: ['eviction', 'status_patch', ...served.flat()] }
+    return { version: connectorVersion, features: [...(this.mode === 'write' ? ['eviction', 'status_patch'] as const : []), ...customResources.filter(resource => this.served.has(resource))] }
+  }
+
+  /** One page of a list. A page over the byte limit is retried at half the size; the continue token reaches the rest. */
+  private async listPage(query: Extract<Extract<KubernetesCommand, { mode: 'read' }>['query'], { operation: 'list' }>, limit: number): Promise<unknown> {
+    const params = new URLSearchParams({ limit: String(limit) })
+    if (query.continueToken) params.set('continue', query.continueToken)
+    if (query.selector) params.set('labelSelector', query.selector)
+    try {
+      return await this.request(`${resourcePath(query)}?${params}`, 'GET', undefined, query.resource === 'secrets' ? { Accept: 'application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1' } : {})
+    } catch (error) {
+      if (error instanceof ResponseTooLarge && limit > 1) return this.listPage(query, Math.ceil(limit / 2))
+      throw error
+    }
   }
 
   async run(command: KubernetesCommand): Promise<ConnectorResult> {
@@ -142,10 +165,7 @@ export class KubernetesConnectorClient {
             break
           }
           case 'list': {
-            const params = new URLSearchParams({ limit: String(query.limit) })
-            if (query.continueToken) params.set('continue', query.continueToken)
-            if (query.selector) params.set('labelSelector', query.selector)
-            data = await this.request(`${resourcePath(query)}?${params}`, 'GET', undefined, query.resource === 'secrets' ? { Accept: 'application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1' } : {})
+            data = await this.listPage(query, query.limit)
             const list = data as { items?: unknown[]; metadata?: { continue?: string } }
             truncated = Boolean(list.metadata?.continue)
             // One bounded page per request; absence beyond this page is never evidence.
@@ -159,7 +179,7 @@ export class KubernetesConnectorClient {
       return { observedAt: new Date().toISOString(), data: sanitized, truncated, error: null }
     } catch (error) {
       const status = error instanceof ApiFailure ? error.status : null
-      const kind = status === 403 || status === 401 ? 'forbidden' : status === 404 ? 'not_found' : status === 409 || status === 410 || status === 422 ? 'conflict' : status === 429 ? 'throttled' : mutationStarted && (!status || status >= 500) ? 'ambiguous' : status ? 'unavailable' : 'invalid'
+      const kind = status === 403 || status === 401 ? 'forbidden' : status === 404 ? 'not_found' : status === 409 || status === 410 || status === 422 ? 'conflict' : status === 429 ? 'throttled' : mutationStarted && (!status || status >= 500) ? 'ambiguous' : status || error instanceof ResponseTooLarge ? 'unavailable' : 'invalid'
       return { observedAt: new Date().toISOString(), data: null, truncated: false, error: kind }
     }
   }

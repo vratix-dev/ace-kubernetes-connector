@@ -44,6 +44,7 @@ export const kubernetesResources = {
 } as const
 /** The custom resources above, each reported as a capability only when its API is served by the cluster. */
 export const customResources = ['applications', 'rollouts', 'kustomizations', 'helmreleases'] as const
+export type CustomResource = (typeof customResources)[number]
 export const kubernetesResourceSchema = z.enum(Object.keys(kubernetesResources) as [keyof typeof kubernetesResources, ...Array<keyof typeof kubernetesResources>])
 export const kubernetesRefSchema = z.object({ resource: kubernetesResourceSchema, namespace: name.nullable(), name }).strict()
 export type KubernetesRef = z.infer<typeof kubernetesRefSchema>
@@ -86,9 +87,8 @@ export const connectorResultSchema = z.object({
 export type ConnectorResult = z.infer<typeof connectorResultSchema>
 
 /**
- * What this connector can do, sent with every poll. Ace sends a command that needs a feature only to a connector
- * reporting it, so older connectors never receive commands they cannot parse. Custom resources are reported by
- * name when the cluster serves their API.
+ * What this connector can do, sent with every poll and required by Ace. A writer reports eviction and status patches.
+ * Custom resources are reported by name when the cluster serves their API; Ace answers for a command on one that is not.
  */
 export const connectorFeatures = ['eviction', 'status_patch', ...customResources] as const
 export const connectorHeartbeatSchema = z.object({

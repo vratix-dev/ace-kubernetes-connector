@@ -5,10 +5,11 @@ The connector runs inside your cluster and lets Ace inspect the namespaces you c
 - **Reader:** get/list on supported resources and container logs in the selected namespaces. It cannot read Secret values. Cluster-scoped reads (nodes, namespaces, storage, RBAC and admission webhooks) are optional.
 - **Writer (optional):** a separate release with its own credential and broad access within the selected namespaces, or optionally the whole cluster, used only for changes you approve in Ace. This includes pod evictions through the Eviction API, which respects PodDisruptionBudgets, and status patches of custom resources (an Argo Rollout's abort or promote).
 - **GitOps and progressive delivery:** the reader also gets and lists Argo CD `Application`, Argo Rollouts `Rollout` and Flux `Kustomization`/`HelmRelease` objects in the selected namespaces when those CRDs are installed. Include the namespace your Argo CD Applications or Flux objects live in (for example `argocd` or `flux-system`) to let Ace see and, with the writer, act on them.
+  - **These objects reach beyond their namespace.** Scope is checked on the object's own namespace, so a writer that can change an `Application`, `Kustomization` or `HelmRelease` can affect the workloads it manages in other namespaces. Deleting an Application with a cascade finalizer deletes those workloads. Only give the writer these namespaces if that reach is acceptable.
 
-Every poll reports the connector version and the features it supports, including which of those custom resources the cluster serves. Ace sends a command only to a connector that reports what it needs, so mixed versions are safe. Upgrade Ace before installing a connector release that adds features.
+Every poll reports the connector version and the features it supports, including which of those custom resources the cluster serves. Ace requires this report and supports only the connector version it pins, so upgrade the connector and Ace together.
 
-Results are bounded and pass through redaction before they leave the cluster. Kubernetes credentials stay in the cluster.
+Results are bounded and pass through redaction before they leave the cluster. Helm values, Flux substitutions and inline Kustomize patches keep their structure but not their values. Other configuration, such as ConfigMap data, is redacted by key name and known credential formats, so a credential under an unremarkable key can still leave the cluster: keep credentials in Secrets. Kubernetes credentials stay in the cluster.
 
 ## Install with Helm
 
@@ -47,7 +48,7 @@ The pod runs as a non-root user with a read-only root filesystem, no privilege e
 ### Rotate, upgrade or remove
 
 - **Rotate the credential:** replace the Secret contents. The connector rereads its token file, so it needs no restart.
-- **Upgrade:** run `helm upgrade` with the new chart version. Reader and writer versions should move together. A newly installed CRD is picked up within ten minutes, or on restart.
+- **Upgrade:** run `helm upgrade` with the new chart version. Reader and writer versions should move together. A newly installed CRD is picked up within a minute.
 - **Remove:** disconnect in Ace first, then `helm uninstall <release> -n ace-connectors` and delete the credential Secret.
 
 ## Images and charts

@@ -72,14 +72,63 @@ describe('eviction, status patches and capabilities', () => {
     expect(api.isDone()).toBe(true)
   })
 
-  it('reports eviction, status patches and only the custom resources the cluster serves', async () => {
-    nock('http://127.0.0.1:18445')
-      .get('/apis/argoproj.io/v1alpha1').twice().reply(200, { resources: [{ name: 'applications' }, { name: 'applications/status' }] })
-      .get('/apis/kustomize.toolkit.fluxcd.io/v1').reply(404)
-      .get('/apis/helm.toolkit.fluxcd.io/v2').reply(200, { resources: [{ name: 'helmreleases' }] })
-    const heartbeat = await client().capabilities()
+  const discovery = (argo: number, kustomize: number, helm: number) => nock('http://127.0.0.1:18445')
+    .get('/apis/argoproj.io/v1alpha1').twice().reply(argo, { resources: [{ name: 'applications' }, { name: 'applications/status' }] })
+    .get('/apis/kustomize.toolkit.fluxcd.io/v1').reply(kustomize)
+    .get('/apis/helm.toolkit.fluxcd.io/v2').reply(helm, { resources: [{ name: 'helmreleases' }] })
+
+  it('reports only the custom resources the cluster serves, and eviction and status patches only on a writer', async () => {
+    discovery(200, 404, 200)
+    const heartbeat = await client('write').capabilities()
     expect(heartbeat).toEqual({ version: '0.2.0', features: ['eviction', 'status_patch', 'applications', 'helmreleases'] })
     expect(connectorHeartbeatSchema.parse(heartbeat)).toEqual(heartbeat)
+    discovery(200, 404, 200)
+    expect((await client('read').capabilities()).features).toEqual(['applications', 'helmreleases'])
+  })
+
+  it('keeps the last answer when discovery fails, and drops a custom resource only on a 404', async () => {
+    const reader = client('read')
+    discovery(200, 404, 200)
+    expect((await reader.capabilities()).features).toEqual(['applications', 'helmreleases'])
+    discovery(503, 503, 404)
+    expect((await reader.capabilities()).features).toEqual(['applications'])
+  })
+
+  it('halves a list page over the byte limit and returns the continue token', async () => {
+    const big = 'x'.repeat(30_000)
+    const api = nock('http://127.0.0.1:18445')
+    const page = (limit: number) => api.get('/apis/argoproj.io/v1alpha1/namespaces/shop/applications').query({ limit: String(limit) })
+    page(100).reply(200, { items: Array.from({ length: 100 }, () => ({ big })) })
+    page(50).reply(200, { items: Array.from({ length: 50 }, () => ({ big: 'small' })), metadata: { continue: 'next' } })
+    const result = await client().run({ mode: 'read', query: { operation: 'list', resource: 'applications', namespace: 'shop', limit: 100 } })
+    expect(result).toMatchObject({ error: null, truncated: true, data: { continueToken: 'next' } })
+    expect((result.data as { items: unknown[] }).items).toHaveLength(50)
+  })
+
+  it('reports an object over the byte limit as unavailable, not invalid', async () => {
+    nock('http://127.0.0.1:18445').get('/api/v1/namespaces/shop/configmaps/huge').reply(200, { big: 'x'.repeat(2_100_000) })
+    expect((await client().run({ mode: 'read', query: { operation: 'get', ref: { resource: 'configmaps', namespace: 'shop', name: 'huge' } } })).error).toBe('unavailable')
+  })
+
+  it('keeps only the shape of Helm values, Flux substitutions and inline patches', () => {
+    expect(sanitizeKubernetes({ kind: 'HelmRelease', spec: { values: { api_key: 'plain', db: { pass: 'hunter2', replicas: 2 }, hosts: ['a'] } } }))
+      .toEqual({ kind: 'HelmRelease', spec: { values: { api_key: '[redacted]', db: { pass: '[redacted]', replicas: '[redacted]' }, hosts: ['[redacted]'] } } })
+    expect(sanitizeKubernetes({ kind: 'Kustomization', spec: { postBuild: { substitute: { STRIPE_KEY: 'plain' } }, patches: [{ patch: 'value: plain', target: { kind: 'Deployment' } }] } }))
+      .toEqual({ kind: 'Kustomization', spec: { postBuild: { substitute: { STRIPE_KEY: '[redacted]' } }, patches: [{ patch: '[redacted]', target: { kind: 'Deployment' } }] } })
+    expect(sanitizeKubernetes({ spec: { source: { helm: { values: 'db:\n  pass: hunter2\n', valuesObject: { apiKey: 'plain' } }, plugin: { parameters: [{ name: 'a', string: 'plain' }, { name: 'b', map: { c: 'plain' } }] } } } }))
+      .toEqual({ spec: { source: { helm: { values: '[redacted]', valuesObject: { apiKey: '[redacted]' } }, plugin: { parameters: [{ name: 'a', string: '[redacted]' }, { name: 'b', map: '[redacted]' }] } } } })
+  })
+
+  it('redacts credentials under common key names, and leaves selector values and lookalike keys alone', () => {
+    expect(sanitizeKubernetes({ api_key: 'a', smtpPwd: 'b', DB_PASS: 'c', dbPass: 'd', dsn: 'e', accessKeyId: 'f', bypass: 'kept', matchExpressions: [{ key: 'tier', operator: 'In', values: ['web'] }] }))
+      .toEqual({ api_key: '[redacted]', smtpPwd: '[redacted]', DB_PASS: '[redacted]', dbPass: '[redacted]', dsn: '[redacted]', accessKeyId: '[redacted]', bypass: 'kept', matchExpressions: [{ key: 'tier', operator: 'In', values: ['web'] }] })
+  })
+
+  it('keeps the name in a reference with kind Secret, and still reduces a Secret to its key names', () => {
+    expect(sanitizeKubernetes({ status: { resources: [{ kind: 'Secret', namespace: 'shop', name: 'web-tls', status: 'OutOfSync' }] }, spec: { valuesFrom: [{ kind: 'Secret', name: 'prod-values', valuesKey: 'values.yaml' }] } }))
+      .toEqual({ status: { resources: [{ kind: 'Secret', namespace: 'shop', name: 'web-tls', status: 'OutOfSync' }] }, spec: { valuesFrom: [{ kind: 'Secret', name: 'prod-values', valuesKey: 'values.yaml' }] } })
+    expect(sanitizeKubernetes({ kind: 'Secret', data: { password: 'aHVudGVyMg==' } })).toEqual({ kind: 'Secret', keys: ['password'] })
+    expect(sanitizeKubernetes({ kind: 'SecretList', items: [{ metadata: { name: 'db' }, data: { password: 'aHVudGVyMg==' } }] })).toEqual({ kind: 'SecretList', items: [{ kind: 'Secret', metadata: { name: 'db' }, keys: ['password'] }] })
   })
 
   it('retains GitOps ownership and rollout revision annotations, and still drops the rest', () => {

@@ -28,9 +28,9 @@ async function main() {
   }
   process.once('SIGTERM', () => shutdown.abort())
   process.once('SIGINT', () => shutdown.abort())
-  // Reported with every poll; refreshed every ten minutes so a CRD installed later is picked up.
+  // Reported with every poll; refreshed every minute so a CRD installed later is picked up and a failed lookup at startup recovers.
   let heartbeat = await client.capabilities()
-  const refresh = setInterval(() => { void client.capabilities().then(value => { heartbeat = value }, () => {}) }, 600_000)
+  const refresh = setInterval(() => { void client.capabilities().then(value => { heartbeat = value }, () => {}) }, 60_000)
   refresh.unref()
   let connectedAt = 0, healthy = true
   let healthUpdate = Promise.resolve()
