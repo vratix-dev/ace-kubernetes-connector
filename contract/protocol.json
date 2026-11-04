@@ -157,7 +157,6 @@
         "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"
       },
       "namespaces": {
-        "minItems": 1,
         "maxItems": 50,
         "type": "array",
         "items": {
@@ -1186,7 +1185,6 @@
           "enum": [
             "eviction",
             "status_patch",
-            "all_namespaces",
             "applications",
             "rollouts",
             "kustomizations",

@@ -22,13 +22,17 @@ roleRef:
   name: {{ $name }}-identity
 {{- if eq (include "connector.allNamespaces" .) "true" }}
 ---
-# The reader's namespaced reads, in every namespace.
+# The connector's namespaced access, in every namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: {{ $name }}-namespaces
 rules:
+  {{- if eq .Values.mode "read" }}
   {{- include "connector.readRules" . | nindent 2 }}
+  {{- else }}
+  {{- include "connector.writeRules" . | nindent 2 }}
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

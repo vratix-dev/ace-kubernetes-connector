@@ -14,7 +14,7 @@ async function main() {
   const id = z.string().uuid().parse(process.env.ACE_CONNECTOR_ID)
   const mode = z.enum(['read', 'write']).parse(process.env.ACE_CONNECTOR_MODE ?? 'read')
   const scope = connectorScopeSchema.parse({ clusterName: process.env.ACE_CLUSTER_NAME, namespaces: (process.env.ACE_NAMESPACES ?? '').split(',').filter(Boolean), clusterResources: process.env.ACE_CLUSTER_RESOURCES === 'true', allNamespaces: process.env.ACE_ALL_NAMESPACES === 'true' })
-  if (mode === 'write' && scope.allNamespaces) throw new Error('A writer acts only in its selected namespaces.')
+  if (!scope.allNamespaces && !scope.namespaces.length) throw new Error('Select at least one namespace, or cover every namespace.')
   const kube = new KubeConfig()
   if (process.env.KUBECONFIG) kube.loadFromFile(process.env.KUBECONFIG)
   else kube.loadFromCluster()

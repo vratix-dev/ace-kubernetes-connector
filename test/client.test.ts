@@ -21,10 +21,11 @@ describe('connector scope and local execution', () => {
     expect(() => assertConnectorScope({ mode: 'write', mutation: patch, dryRun: false }, scope, 'read')).toThrow('read connector')
     expect(() => assertConnectorScope({ mode: 'read', query: { operation: 'list', resource: 'pods', namespace: null, limit: 20 } }, { ...scope, clusterResources: true }, 'read')).toThrow('concrete namespace')
     expect((await client().run({ mode: 'read', query: { operation: 'get', ref: { ...ref, namespace: 'other' } } })).error).toBe('invalid')
-    // A cluster-wide reader reads any namespace; the same scope never lets a write leave the selected namespaces.
+    // A cluster-wide connector reads, or writes, any namespace; Secrets stay in the selected namespaces; a limited one stays in its own.
     expect(() => assertConnectorScope({ mode: 'read', query: { operation: 'get', ref: { resource: 'configmaps', namespace: 'kube-system', name: 'coredns' } } }, { ...scope, allNamespaces: true }, 'read')).not.toThrow()
     expect(() => assertConnectorScope({ mode: 'read', query: { operation: 'get', ref: { resource: 'secrets', namespace: 'kube-system', name: 'bootstrap-token' } } }, { ...scope, allNamespaces: true }, 'read')).toThrow('outside the connector scope')
-    expect(() => assertConnectorScope({ mode: 'write', mutation: { ...patch, ref: { ...ref, namespace: 'kube-system' } }, dryRun: false }, { ...scope, allNamespaces: true }, 'write')).toThrow('outside the connector scope')
+    expect(() => assertConnectorScope({ mode: 'write', mutation: { ...patch, ref: { ...ref, namespace: 'kube-system' } }, dryRun: false }, { ...scope, allNamespaces: true }, 'write')).not.toThrow()
+    expect(() => assertConnectorScope({ mode: 'write', mutation: { ...patch, ref: { ...ref, namespace: 'kube-system' } }, dryRun: false }, scope, 'write')).toThrow('outside the connector scope')
     expect(kubernetesMutationSchema.safeParse({ ...patch, patch: [{ op: 'replace', path: '/spec/replicas' }] }).success).toBe(false)
   })
   it('sends exact patch bytes with UID and resource-version preconditions and dry-run', async () => {

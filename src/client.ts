@@ -167,7 +167,7 @@ export class KubernetesConnectorClient {
         if (error instanceof ApiFailure && error.status === 404) this.served.delete(resource)
       }
     }))
-    return { version: connectorVersion, features: [...(this.mode === 'write' ? ['eviction', 'status_patch'] as const : []), ...(this.mode === 'read' && this.scope.allNamespaces ? ['all_namespaces'] as const : []), ...customResources.filter(resource => this.served.has(resource))] }
+    return { version: connectorVersion, features: [...(this.mode === 'write' ? ['eviction', 'status_patch'] as const : []), ...customResources.filter(resource => this.served.has(resource))] }
   }
 
   /** One page of a list. A page over the byte limit is retried at half the size; the continue token reaches the rest. */

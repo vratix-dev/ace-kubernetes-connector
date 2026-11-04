@@ -25,23 +25,24 @@ describe('Helm chart', () => {
     expect(execFileSync('helm', ['version', '--short'], { encoding: 'utf8' })).toMatch(/^v[34]\./)
   })
 
-  it('by default lets the reader read every namespace and cluster-scoped objects, never Secrets, and keeps a writer in its namespaces', () => {
+  it('by default covers every namespace, never Secrets, and gives cluster-scoped writes only with cluster administration', () => {
     const { clusterResources: _, ...unset } = base
+    const grants = (role: K8sObject): string[] => role.rules.flatMap((rule: { apiGroups: string[]; resources: string[] }) => rule.apiGroups.flatMap(group => rule.resources.map(resource => `${group}/${resource}`)))
     const reader = render(unset)
-    const namespaced = reader.find(item => item.kind === 'ClusterRole' && item.metadata.name === 'ace-read-00000000-namespaces')!
-    const grants = (role: K8sObject) => role.rules.flatMap((rule: { apiGroups: string[]; resources: string[]; verbs: string[] }) => { expect(rule.verbs).toEqual(['get', 'list']); return rule.apiGroups.flatMap(group => rule.resources.map(resource => `${group}/${resource}`)) })
-    expect(grants(namespaced)).not.toContain('/secrets')
-    expect(grants(namespaced)).toContain('/pods/log')
+    const read = reader.find(item => item.kind === 'ClusterRole' && item.metadata.name === 'ace-read-00000000-namespaces')!
+    expect(read.rules.every((rule: { verbs: string[] }) => rule.verbs.join() === 'get,list')).toBe(true)
+    expect(grants(read)).not.toContain('/secrets')
     expect(grants(reader.find(item => item.kind === 'ClusterRole' && item.metadata.name === 'ace-read-00000000')!)).toContain('admissionregistration.k8s.io/mutatingwebhookconfigurations')
     expect(reader.find(item => item.kind === 'Deployment')!.spec.template.spec.containers[0].env).toEqual(expect.arrayContaining([{ name: 'ACE_ALL_NAMESPACES', value: 'true' }, { name: 'ACE_CLUSTER_RESOURCES', value: 'true' }]))
-    const writer = render({ ...unset, mode: 'write', existingSecret: 'ace-write-00000000' })
-    expect(writer.filter(item => item.kind === 'Role').map(role => role.metadata.namespace)).toEqual(['checkout', 'billing'])
-    expect(writer.filter(item => item.kind === 'ClusterRole').map(role => role.metadata.name)).toEqual(['ace-write-00000000-identity'])
-    expect(helm({ ...unset, mode: 'write', existingSecret: 'ace-write-00000000', allNamespaces: true }).status).not.toBe(0)
-    // Upgrading an existing reader without explicit values never widens it.
-    const upgraded = render(unset, ['--is-upgrade'])
-    expect(upgraded.filter(item => item.kind === 'ClusterRole').map(role => role.metadata.name)).toEqual(['ace-read-00000000-identity'])
-    expect(upgraded.filter(item => item.kind === 'Role').map(role => role.metadata.namespace)).toEqual(['checkout', 'billing'])
+    // A writer changes namespaced objects anywhere (a fix may sit in another namespace), never Secrets or cluster-scoped objects without cluster administration.
+    const writer = render({ ...unset, mode: 'write', existingSecret: 'ace-write-00000000', namespaces: [] })
+    const write = writer.find(item => item.kind === 'ClusterRole' && item.metadata.name === 'ace-write-00000000-namespaces')!
+    expect(grants(write)).toEqual(expect.arrayContaining(['apps/deployments', '/configmaps', '/pods/eviction']))
+    expect(grants(write).filter(grant => grant === '/secrets' || grant.includes('*') || ['/nodes', '/namespaces', '/persistentvolumes'].includes(grant))).toEqual([])
+    expect(writer.filter(item => item.kind === 'ClusterRole').map(role => role.metadata.name).sort()).toEqual(['ace-write-00000000-identity', 'ace-write-00000000-namespaces'])
+    // Limited to listed namespaces, it gets a Role in each; with none listed it is refused.
+    expect(render({ ...unset, mode: 'write', existingSecret: 'ace-write-00000000', allNamespaces: false }).filter(item => item.kind === 'Role').map(role => role.metadata.namespace)).toEqual(['checkout', 'billing'])
+    expect(helm({ ...unset, mode: 'write', existingSecret: 'ace-write-00000000', allNamespaces: false, namespaces: [] }).status).not.toBe(0)
   })
 
   it('grants the reader get/list on every supported namespaced resource except Secrets', () => {
@@ -86,7 +87,7 @@ describe('Helm chart', () => {
       { ...base, image: { repository: 'registry.example/connector:latest', digest: base.image.digest } },
       { ...base, apiUrl: 'http://ace.example' },
       { ...base, apiUrl: 'https://ace.example/prefix' },
-      { ...base, namespaces: [] },
+      { ...base, namespaces: [], allNamespaces: false },
       { ...base, token: 'c'.repeat(43) },
       withoutCredential,
       { ...withoutCredential, token: 'short' },

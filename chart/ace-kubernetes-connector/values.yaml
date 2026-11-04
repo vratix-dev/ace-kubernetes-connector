@@ -3,21 +3,20 @@
 # Connector ID issued by Ace.
 connectorId: ""
 # read: get/list across the cluster (or only the selected namespaces), no Secret access.
-# write: broad access in the selected namespaces for approved changes. Install it as a separate release.
+# write: changes across the cluster (or only the selected namespaces) for approved plans. Install it as a separate release.
 mode: read
 # HTTPS origin of your Ace installation, without a path.
 apiUrl: ""
 # Display name of this cluster in Ace.
 clusterName: ""
-# Namespaces Ace watches. The writer may act only in these.
+# Namespaces to limit the connector to when allNamespaces is false. Optional otherwise.
 namespaces: []
-# Reader only: read every namespace, not just the selected ones. Unset means true
-# for a newly installed reader and false on an upgrade, so an existing reader never
-# widens without an explicit value; a writer is always limited to the selected namespaces.
+# Cover every namespace (Secrets excepted). Unset means true. Set false to limit
+# the connector to the namespaces above.
 allNamespaces: null
 # Also grant cluster-scoped access (read: nodes, namespaces, storage, RBAC and
 # admission webhooks; write: every API group and verb). Unset means true for a
-# newly installed reader, false on an upgrade and false for a writer.
+# reader and false for a writer.
 clusterResources: null
 
 image:

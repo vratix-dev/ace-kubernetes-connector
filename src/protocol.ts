@@ -76,10 +76,10 @@ export const kubernetesCommandSchema = z.discriminatedUnion('mode', [
 export type KubernetesCommand = z.infer<typeof kubernetesCommandSchema>
 export const connectorScopeSchema = z.object({
   clusterName: name,
-  /** The namespaces Ace watches and maps workloads to; the writer acts only in these. */
-  namespaces: z.array(name).min(1).max(50),
+  /** Namespaces the connector is limited to when it does not cover every namespace; Secrets are read only in these. */
+  namespaces: z.array(name).max(50),
   clusterResources: z.boolean().default(false),
-  /** The reader may read every namespace, Secrets excepted; a writer never does. */
+  /** The connector reads, or for a writer changes, every namespace; Secrets are never read outside `namespaces` or changed. */
   allNamespaces: z.boolean().default(false),
 }).strict()
 /** As given: unset flags take their defaults. */
@@ -96,8 +96,7 @@ export type ConnectorResult = z.infer<typeof connectorResultSchema>
  * What this connector can do, sent with every poll and required by Ace. A writer reports eviction and status patches.
  * Custom resources are reported by name when the cluster serves their API; Ace answers for a command on one that is not.
  */
-/** all_namespaces: a reader that reads every namespace (and enforces it), so Ace may ask it to. */
-export const connectorFeatures = ['eviction', 'status_patch', 'all_namespaces', ...customResources] as const
+export const connectorFeatures = ['eviction', 'status_patch', ...customResources] as const
 export const connectorHeartbeatSchema = z.object({
   version: z.string().regex(/^\d+\.\d+\.\d+$/),
   features: z.array(z.enum(connectorFeatures)).max(20),
@@ -117,9 +116,9 @@ export function assertConnectorScope(command: KubernetesCommand, scope: Connecto
   if (query.operation === 'identity') return
   const namespace = 'ref' in query ? query.ref.namespace : query.namespace
   const resource = query.operation === 'logs' ? 'pods' : 'ref' in query ? query.ref.resource : query.resource
-  // Secrets stay in the selected namespaces even for a cluster-wide reader.
-  const readable = (name: string) => scope.namespaces.includes(name) || command.mode === 'read' && Boolean(scope.allNamespaces) && resource !== 'secrets'
-  if (namespace ? !readable(namespace) : !scope.clusterResources) throw new Error('The request is outside the connector scope.')
+  // Secrets stay in the selected namespaces even for a cluster-wide connector.
+  const covered = (name: string) => scope.namespaces.includes(name) || Boolean(scope.allNamespaces) && resource !== 'secrets'
+  if (namespace ? !covered(namespace) : !scope.clusterResources) throw new Error('The request is outside the connector scope.')
   if (kubernetesResources[resource].namespaced !== Boolean(namespace)) throw new Error('A concrete namespace is required for namespaced resources.')
   if (command.mode === 'write' && resource === 'secrets') throw new Error('The connector does not mutate Secrets.')
 }

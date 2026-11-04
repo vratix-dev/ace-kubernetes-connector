@@ -13,22 +13,19 @@
   namespace: {{ .Release.Namespace }}
 {{- end -}}
 
-{{/*
-Effective scope. A reader newly installed reads the whole cluster unless told otherwise; an upgrade without an
-explicit value keeps the narrower scope it had, so no existing reader widens silently. A writer acts only where it is told.
-*/}}
+{{/* Effective scope: both connectors cover every namespace unless told otherwise; only the reader reads cluster-scoped objects by default. */}}
 {{- define "connector.allNamespaces" -}}
-{{- if and (eq .Values.mode "write") (eq (toString .Values.allNamespaces) "true") -}}
-{{- fail "allNamespaces applies to the reader only; the writer acts in the selected namespaces." -}}
-{{- end -}}
-{{- if kindIs "invalid" .Values.allNamespaces -}}{{- and (eq .Values.mode "read") .Release.IsInstall -}}{{- else -}}{{- and (eq .Values.mode "read") (eq (toString .Values.allNamespaces) "true") -}}{{- end -}}
+{{- ne (toString .Values.allNamespaces) "false" -}}
 {{- end -}}
 
 {{- define "connector.clusterResources" -}}
-{{- if kindIs "invalid" .Values.clusterResources -}}{{- and (eq .Values.mode "read") .Release.IsInstall -}}{{- else -}}{{- eq (toString .Values.clusterResources) "true" -}}{{- end -}}
+{{- if kindIs "invalid" .Values.clusterResources -}}{{- eq .Values.mode "read" -}}{{- else -}}{{- eq (toString .Values.clusterResources) "true" -}}{{- end -}}
 {{- end -}}
 
 {{- define "connector.validate" -}}
+{{- if and (ne (include "connector.allNamespaces" .) "true") (not .Values.namespaces) -}}
+{{- fail "Select at least one namespace, or leave allNamespaces unset to cover every namespace." -}}
+{{- end -}}
 {{- if and .Values.token .Values.existingSecret -}}
 {{- fail "Set either existingSecret or token, not both." -}}
 {{- end -}}
@@ -102,4 +99,42 @@ explicit value keeps the narrower scope it had, so no existing reader widens sil
 - apiGroups: [admissionregistration.k8s.io]
   resources: [validatingwebhookconfigurations]
   verbs: [get, list]
+{{- end -}}
+
+
+{{/* The writer's namespaced changes, in every namespace: the supported kinds and the subresources Ace uses, never Secrets or cluster-scoped objects. */}}
+{{- define "connector.writeRules" -}}
+- apiGroups: [""]
+  resources: [pods, services, endpoints, configmaps, events, persistentvolumeclaims, resourcequotas, limitranges, serviceaccounts, pods/log, pods/exec, pods/eviction]
+  verbs: [get, list, patch, create, delete]
+- apiGroups: [apps]
+  resources: [deployments, replicasets, statefulsets, daemonsets, controllerrevisions]
+  verbs: [get, list, patch, create, delete]
+- apiGroups: [batch]
+  resources: [jobs, cronjobs]
+  verbs: [get, list, patch, create, delete]
+- apiGroups: [networking.k8s.io]
+  resources: [ingresses, networkpolicies]
+  verbs: [get, list, patch, create, delete]
+- apiGroups: [discovery.k8s.io]
+  resources: [endpointslices]
+  verbs: [get, list, patch, create, delete]
+- apiGroups: [autoscaling]
+  resources: [horizontalpodautoscalers]
+  verbs: [get, list, patch, create, delete]
+- apiGroups: [policy]
+  resources: [poddisruptionbudgets]
+  verbs: [get, list, patch, create, delete]
+- apiGroups: [rbac.authorization.k8s.io]
+  resources: [roles, rolebindings]
+  verbs: [get, list, patch, create, delete]
+- apiGroups: [argoproj.io]
+  resources: [applications, rollouts, rollouts/status]
+  verbs: [get, list, patch, create, delete]
+- apiGroups: [kustomize.toolkit.fluxcd.io]
+  resources: [kustomizations]
+  verbs: [get, list, patch, create, delete]
+- apiGroups: [helm.toolkit.fluxcd.io]
+  resources: [helmreleases]
+  verbs: [get, list, patch, create, delete]
 {{- end -}}
