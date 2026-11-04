@@ -20,6 +20,27 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: {{ $name }}-identity
+{{- if eq (include "connector.allNamespaces" .) "true" }}
+---
+# The reader's namespaced reads, in every namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}-namespaces
+rules:
+  {{- include "connector.readRules" . | nindent 2 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}-namespaces
+subjects:
+  {{- include "connector.subject" . | nindent 2 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}-namespaces
+{{- else }}
 {{- range .Values.namespaces }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -48,7 +69,8 @@ roleRef:
   kind: Role
   name: {{ $name }}
 {{- end }}
-{{- if .Values.clusterResources }}
+{{- end }}
+{{- if eq (include "connector.clusterResources" .) "true" }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

@@ -1,10 +1,10 @@
 # Ace Kubernetes connector
 
-The connector runs inside your cluster and lets Ace inspect the namespaces you choose. It opens outbound HTTPS connections to your Ace installation. No inbound port, exposed Kubernetes API or uploaded kubeconfig is needed.
+The connector runs inside your cluster and lets Ace inspect it: by default the reader reads the whole cluster, and the writer acts only in the namespaces you choose. It opens outbound HTTPS connections to your Ace installation. No inbound port, exposed Kubernetes API or uploaded kubeconfig is needed.
 
-- **Reader:** get/list on supported resources and container logs in the selected namespaces. It cannot read Secret values. Cluster-scoped reads (nodes, namespaces, storage, RBAC and admission webhooks) are optional.
+- **Reader:** get/list on supported resources and container logs in every namespace, plus cluster-scoped reads (nodes, namespaces, storage, RBAC and admission webhooks), so an incident whose cause sits in another namespace, such as DNS in `kube-system` or an admission controller's own namespace, can be traced. It cannot read Secrets. Set `allNamespaces=false` and `clusterResources=false` to limit it to the selected namespaces. An upgrade that does not set them keeps a reader's earlier scope; set them to `true` to widen it. Secrets are read, as metadata only, in the selected namespaces alone. Literal environment values leave the cluster only as keyed fingerprints: within one connector run equal values have equal fingerprints, the key never leaves the reader's process, and credential-named values are not fingerprinted at all.
 - **Writer (optional):** a separate release with its own credential and broad access within the selected namespaces, or optionally the whole cluster, used only for changes you approve in Ace. This includes pod evictions through the Eviction API, which respects PodDisruptionBudgets, and status patches of custom resources (an Argo Rollout's abort or promote).
-- **GitOps and progressive delivery:** the reader also gets and lists Argo CD `Application`, Argo Rollouts `Rollout` and Flux `Kustomization`/`HelmRelease` objects in the selected namespaces when those CRDs are installed. Include the namespace your Argo CD Applications or Flux objects live in (for example `argocd` or `flux-system`) to let Ace see and, with the writer, act on them.
+- **GitOps and progressive delivery:** the reader also gets and lists Argo CD `Application`, Argo Rollouts `Rollout` and Flux `Kustomization`/`HelmRelease` objects when those CRDs are installed, in every namespace a cluster-wide reader reads. Include the namespace your Argo CD Applications or Flux objects live in (for example `argocd` or `flux-system`) to let Ace see and, with the writer, act on them.
   - **These objects reach beyond their namespace.** Scope is checked on the object's own namespace, so a writer that can change an `Application`, `Kustomization` or `HelmRelease` can affect the workloads it manages in other namespaces. Deleting an Application with a cascade finalizer deletes those workloads. Only give the writer these namespaces if that reach is acceptable.
 
 Every poll reports the connector version and the features it supports, including which of those custom resources the cluster serves. Ace requires this report and works with every version on its supported list, using only the features each one reports. A version not on the list is refused with a clear reason.
@@ -34,14 +34,15 @@ The same values work in a values file for Argo CD, Flux or other GitOps tools. K
 | `mode` | `read` or `write`. Install the reader and writer as separate releases. |
 | `apiUrl` | HTTPS origin of your Ace installation. |
 | `clusterName` | Display name of the cluster in Ace. |
-| `namespaces` | Namespaces the connector may access. |
-| `clusterResources` | Also grant cluster-scoped access. Default `false`. |
+| `namespaces` | Namespaces Ace watches and maps workloads to. The writer acts only in these. |
+| `allNamespaces` | Reader only: read every namespace. Unset: `true` on a new install, unchanged (`false`) on an upgrade. The writer refuses it. |
+| `clusterResources` | Also grant cluster-scoped access. Unset: `true` for a newly installed reader, `false` on an upgrade and for the writer. |
 | `image.repository` / `image.digest` | Released charts pin the image they were tested with. Override both to use a registry mirror. Mutable tags are rejected. |
 | `imagePullSecrets` | Registry Secrets for a private mirror. |
 | `existingSecret` | Secret with the Ace credential under the key `token`. |
 | `token` | Alternative to `existingSecret`: `--set-file token=PATH`. Helm then keeps the credential in its release record. |
 
-The chart creates objects named `ace-<mode>-<first 8 characters of the connector ID>` in the release namespace, plus `Role`/`RoleBinding` objects in each selected namespace. It does not create or delete the namespace itself.
+The chart creates objects named `ace-<mode>-<first 8 characters of the connector ID>` in the release namespace, plus a cluster-wide read `ClusterRole` for a reader (or `Role`/`RoleBinding` objects in each selected namespace for a writer, or a reader limited with `allNamespaces=false`). It does not create or delete the namespace itself.
 
 The pod runs as a non-root user with a read-only root filesystem, no privilege escalation, all capabilities dropped, the `RuntimeDefault` seccomp profile and bounded CPU and memory. Readiness requires a recent successful connection to Ace.
 

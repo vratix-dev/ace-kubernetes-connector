@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import nock from 'nock'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { KubeConfig } from '@kubernetes/client-node'
 import { KubernetesConnectorClient, connectorVersion } from '../src/client'
 import { assertConnectorScope, connectorHeartbeatSchema, kubernetesMutationSchema } from '../src/protocol'
-import { sanitizeKubernetes } from '../src/sanitize'
+import { literalFingerprint, sanitizeKubernetes, sanitizeKubernetesResult, sanitizeLogText } from '../src/sanitize'
 
 const scope = { clusterName: 'test', namespaces: ['shop'], clusterResources: false }
 const ref = { resource: 'deployments' as const, namespace: 'shop', name: 'frontend' }
@@ -19,6 +21,10 @@ describe('connector scope and local execution', () => {
     expect(() => assertConnectorScope({ mode: 'write', mutation: patch, dryRun: false }, scope, 'read')).toThrow('read connector')
     expect(() => assertConnectorScope({ mode: 'read', query: { operation: 'list', resource: 'pods', namespace: null, limit: 20 } }, { ...scope, clusterResources: true }, 'read')).toThrow('concrete namespace')
     expect((await client().run({ mode: 'read', query: { operation: 'get', ref: { ...ref, namespace: 'other' } } })).error).toBe('invalid')
+    // A cluster-wide reader reads any namespace; the same scope never lets a write leave the selected namespaces.
+    expect(() => assertConnectorScope({ mode: 'read', query: { operation: 'get', ref: { resource: 'configmaps', namespace: 'kube-system', name: 'coredns' } } }, { ...scope, allNamespaces: true }, 'read')).not.toThrow()
+    expect(() => assertConnectorScope({ mode: 'read', query: { operation: 'get', ref: { resource: 'secrets', namespace: 'kube-system', name: 'bootstrap-token' } } }, { ...scope, allNamespaces: true }, 'read')).toThrow('outside the connector scope')
+    expect(() => assertConnectorScope({ mode: 'write', mutation: { ...patch, ref: { ...ref, namespace: 'kube-system' } }, dryRun: false }, { ...scope, allNamespaces: true }, 'write')).toThrow('outside the connector scope')
     expect(kubernetesMutationSchema.safeParse({ ...patch, patch: [{ op: 'replace', path: '/spec/replicas' }] }).success).toBe(false)
   })
   it('sends exact patch bytes with UID and resource-version preconditions and dry-run', async () => {
@@ -140,5 +146,71 @@ describe('eviction, status patches and capabilities', () => {
     const { readFileSync } = await import('node:fs')
     expect(connectorVersion).toBe(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version)
     expect(readFileSync(new URL('../chart/ace-kubernetes-connector/Chart.yaml', import.meta.url), 'utf8')).toContain(`version: ${connectorVersion}`)
+  })
+})
+
+describe('reads keep the evidence an incident turns on', () => {
+  it('returns the newest log lines, a Secret\'s key names through a second pass, and an unanswered API call as unavailable', async () => {
+    // A worker that logs long routine lines, a credential, and then fails on its last line: more than any byte bound.
+    const lines = Array.from({ length: 299 }, (_, i) => `2026-11-04T10:${String(i % 60).padStart(2, '0')}:00Z INFO invoice-worker heartbeat queue=invoices lag=${i} ${'.'.repeat(400)}`)
+    lines.splice(290, 0, '2026-11-04T10:58:00Z DEBUG connecting with password=hunter2')
+    lines.push('2026-11-04T10:59:59Z FATAL invoice-worker: payment gateway rejected TLS handshake: certificate expired')
+    // As the API server answers: limitBytes keeps the first bytes of the tail.
+    nock('http://127.0.0.1:18445').get('/api/v1/namespaces/shop/pods/worker/log').query(true).reply(function (uri) {
+      const limit = Number(new URL(uri, 'http://x').searchParams.get('limitBytes') ?? Infinity)
+      return [200, Buffer.from(lines.join('\n')).subarray(0, limit).toString()]
+    })
+    const log = await client().run({ mode: 'read', query: { operation: 'logs', namespace: 'shop', pod: 'worker', container: 'app', previous: false, sinceTime: '2026-11-04T10:00:00Z', tailLines: 300 } })
+    const text = log.data as string
+    expect(text.split('\n').at(-1)).toContain('FATAL invoice-worker')
+    expect(text).toMatch(/^\[\d+ earlier log lines omitted\]\n/)
+    expect(text).not.toContain('hunter2')
+    expect(log.truncated).toBe(true)
+    // A pathological body costs bounded time, and its end survives.
+    const started = Date.now(), huge = sanitizeLogText(`${'a.'.repeat(1_000_000)}\nlast line`)
+    expect(Date.now() - started).toBeLessThan(3000)
+    expect(huge.endsWith('last line')).toBe(true)
+    // A private key cut by the bound is removed, not left without its BEGIN marker.
+    const key = `-----BEGIN PRIVATE KEY-----\n${'MIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n'.repeat(700)}-----END PRIVATE KEY-----\nready`
+    expect(sanitizeLogText(key)).not.toContain('MIIEvQIBADANBgkqhkiG9w0BAQEFAASC')
+    // Short logs are returned whole, unchanged.
+    nock('http://127.0.0.1:18445').get('/api/v1/namespaces/shop/pods/quiet/log').query(true).reply(200, 'started\nready')
+    expect((await client().run({ mode: 'read', query: { operation: 'logs', namespace: 'shop', pod: 'quiet', container: 'app', previous: false, sinceTime: '2026-11-04T10:00:00Z', tailLines: 10 } })).data).toBe('started\nready')
+
+    // Ace sanitizes the connector's result again; a renewed certificate Secret must still show its keys, and an empty one none.
+    const tls = sanitizeKubernetes({ apiVersion: 'v1', kind: 'Secret', type: 'kubernetes.io/tls', metadata: { name: 'billing-tls' }, data: { 'tls.crt': 'Y2VydA==', 'tls.key': 'a2V5' } })
+    expect((sanitizeKubernetes(JSON.parse(JSON.stringify(tls))) as { keys: string[] }).keys).toEqual(['tls.crt', 'tls.key'])
+    expect((sanitizeKubernetes(sanitizeKubernetes({ kind: 'Secret', metadata: { name: 'empty' }, data: {} })) as { keys: string[] }).keys).toEqual([])
+    // Metadata alone says nothing about keys: none are claimed.
+    expect(sanitizeKubernetes({ kind: 'Secret', metadata: { name: 'db' } })).not.toHaveProperty('keys')
+
+    // An API server that drops the connection did not reject the query: the read is unavailable, not invalid.
+    const server = createServer((request) => request.socket.destroy())
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const kube = new KubeConfig()
+    kube.loadFromOptions({ clusters: [{ name: 'test', server: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, skipTLSVerify: true }], users: [{ name: 'test' }], contexts: [{ name: 'test', cluster: 'test', user: 'test' }], currentContext: 'test' })
+    nock.enableNetConnect('127.0.0.1')
+    try { expect((await new KubernetesConnectorClient(kube, scope, 'read').run({ mode: 'read', query: { operation: 'get', ref: { resource: 'endpoints', namespace: 'shop', name: 'post-storage' } } })).error).toBe('unavailable') }
+    finally { await new Promise(resolve => server.close(resolve)) }
+  })
+
+  it('lets equal literal environment values be told from changed ones without disclosing either', () => {
+    const container = (env: Array<{ name: string; value: unknown }>) => sanitizeKubernetesResult({ spec: { template: { spec: { containers: [{ name: 'api', env }] } } } }, { fingerprints: true }) as { spec: { template: { spec: { containers: Array<{ env: Array<{ name: string; value: string }> }> } } } }
+    const values = (env: Array<{ name: string; value: unknown }>) => container(env).spec.template.spec.containers[0].env.map(item => item.value)
+    const before = values([{ name: 'PAYMENTS_API_URL', value: 'https://payments.internal' }, { name: 'LOG_LEVEL', value: 'info' }])
+    const after = values([{ name: 'PAYMENTS_API_URL', value: 'https://payments.staging.internal' }, { name: 'LOG_LEVEL', value: 'info' }])
+    expect([...before, ...after].every(value => literalFingerprint.test(value))).toBe(true)
+    expect(after[0]).not.toBe(before[0])
+    // An unchanged value keeps its fingerprint, so nothing is reported as changed when nothing did.
+    expect(after[1]).toBe(before[1])
+    // A name defined twice: whether the two definitions differ is visible.
+    const shadowed = values([{ name: 'UPSTREAM_HOST', value: 'cart:8080' }, { name: 'UPSTREAM_HOST', value: 'cart-canary:8080' }])
+    expect(shadowed[0]).not.toBe(shadowed[1])
+    // A value copied from a fingerprint is still a different value, and key order alone is not a change.
+    expect(values([{ name: 'LOG_LEVEL', value: before[1] }])[0]).not.toBe(before[1])
+    expect(values([{ name: 'LIMITS', value: { a: 1, b: 2 } }])).toEqual(values([{ name: 'LIMITS', value: { b: 2, a: 1 } }]))
+    // No value ever leaves, and without fingerprinting (a writer) literals are only redacted.
+    expect(JSON.stringify([before, after, shadowed])).not.toMatch(/payments|cart|info/)
+    expect(sanitizeKubernetes({ env: [{ name: 'LOG_LEVEL', value: 'info' }] })).toEqual({ env: [{ name: 'LOG_LEVEL', value: '[redacted]' }] })
   })
 })

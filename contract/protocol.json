@@ -170,12 +170,17 @@
       "clusterResources": {
         "default": false,
         "type": "boolean"
+      },
+      "allNamespaces": {
+        "default": false,
+        "type": "boolean"
       }
     },
     "required": [
       "clusterName",
       "namespaces",
-      "clusterResources"
+      "clusterResources",
+      "allNamespaces"
     ],
     "additionalProperties": false
   },
@@ -1181,6 +1186,7 @@
           "enum": [
             "eviction",
             "status_patch",
+            "all_namespaces",
             "applications",
             "rollouts",
             "kustomizations",

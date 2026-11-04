@@ -3,13 +3,16 @@ import http from 'node:http'
 import { Writable } from 'node:stream'
 import { Exec, KubeConfig } from '@kubernetes/client-node'
 import { assertConnectorScope, customResources, kubernetesResources, resourcePath, type ConnectorHeartbeat, type ConnectorResult, type ConnectorScope, type CustomResource, type KubernetesCommand } from './protocol'
-import { sanitizeKubernetes, kubernetesPayloadTruncated } from './sanitize'
+import { LOG_READ_BYTES, sanitizeKubernetesResult, kubernetesPayloadTruncated } from './sanitize'
 
 type PodTemplate = { metadata?: { labels?: Record<string, string> }; $patch?: unknown }
 
 class ApiFailure extends Error {
   constructor(readonly status: number) { super(`Kubernetes API returned ${status}.`) }
 }
+
+/** The API server never answered: a timeout, a refused or reset connection. It says nothing about the request itself. */
+class TransportFailure extends Error {}
 
 class ResponseTooLarge extends Error {
   constructor() { super('Kubernetes response exceeded the byte limit.') }
@@ -24,7 +27,11 @@ export class KubernetesConnectorClient {
 
   constructor(private readonly kube: KubeConfig, readonly scope: ConnectorScope, readonly mode: 'read' | 'write') {}
 
-  private async request(path: string, method = 'GET', body?: unknown, headers: Record<string, string> = {}): Promise<unknown> {
+  /**
+   * One API call. `tailBytes` reads text and keeps only its last bytes, from the next whole line on: a pod log's
+   * newest lines are the ones that matter, and the API server's own limitBytes would keep the oldest instead.
+   */
+  private async request(path: string, method = 'GET', body?: unknown, headers: Record<string, string> = {}, tailBytes?: number): Promise<unknown> {
     const cluster = this.kube.getCurrentCluster()
     if (!cluster) throw new Error('Kubernetes context is missing.')
     const destination = new URL(path, cluster.server)
@@ -37,22 +44,35 @@ export class KubernetesConnectorClient {
     return new Promise((resolve, reject) => {
       const transport = destination.protocol === 'https:' ? https : http
       const request = transport.request(destination, options, response => {
-        const chunks: Buffer[] = []; let bytes = 0
+        const chunks: Buffer[] = []; let bytes = 0, held = 0, cut = false
         response.on('data', chunk => {
           bytes += chunk.length
+          if (tailBytes) {
+            chunks.push(Buffer.from(chunk)); held += chunk.length
+            while (chunks.length > 1 && held - chunks[0].length >= tailBytes) { held -= chunks.shift()!.length; cut = true }
+            return
+          }
           if (bytes > 2_000_000) { response.destroy(); reject(new ResponseTooLarge()); return }
           chunks.push(Buffer.from(chunk))
         })
-        response.on('error', reject)
+        response.on('error', error => reject(new TransportFailure(error.message)))
         response.on('end', () => {
           if ((response.statusCode ?? 500) >= 400) { reject(new ApiFailure(response.statusCode ?? 500)); return }
+          if (tailBytes) {
+            let all = Buffer.concat(chunks)
+            if (all.length > tailBytes) { all = all.subarray(all.length - tailBytes); cut = true }
+            const text = all.toString('utf8')
+            // A cut starts mid-line, possibly mid-character: the text starts at the next whole line.
+            resolve({ text: cut && text.includes('\n') ? text.slice(text.indexOf('\n') + 1) : text, cut })
+            return
+          }
           const text = Buffer.concat(chunks).toString('utf8')
           try { resolve(JSON.parse(text)) } catch { resolve(text) }
         })
       })
-      const deadline = setTimeout(() => request.destroy(new Error('Kubernetes request timed out.')), 15_000)
+      const deadline = setTimeout(() => request.destroy(new TransportFailure('Kubernetes request timed out.')), 15_000)
       request.on('close', () => clearTimeout(deadline))
-      request.on('error', reject)
+      request.on('error', error => reject(error instanceof TransportFailure ? error : new TransportFailure(error.message)))
       request.end(payload)
     })
   }
@@ -147,7 +167,7 @@ export class KubernetesConnectorClient {
         if (error instanceof ApiFailure && error.status === 404) this.served.delete(resource)
       }
     }))
-    return { version: connectorVersion, features: [...(this.mode === 'write' ? ['eviction', 'status_patch'] as const : []), ...customResources.filter(resource => this.served.has(resource))] }
+    return { version: connectorVersion, features: [...(this.mode === 'write' ? ['eviction', 'status_patch'] as const : []), ...(this.mode === 'read' && this.scope.allNamespaces ? ['all_namespaces'] as const : []), ...customResources.filter(resource => this.served.has(resource))] }
   }
 
   /** One page of a list. A page over the byte limit is retried at half the size; the continue token reaches the rest. */
@@ -192,9 +212,11 @@ export class KubernetesConnectorClient {
             data = await this.request(resourcePath(query.ref), 'GET', undefined, query.ref.resource === 'secrets' ? { Accept: 'application/json;as=PartialObjectMetadata;g=meta.k8s.io;v=v1' } : {})
             break
           case 'logs': {
-            const params = new URLSearchParams({ container: query.container, previous: String(query.previous), sinceTime: query.sinceTime, tailLines: String(query.tailLines), limitBytes: '32000', timestamps: 'true' })
-            data = await this.request(`${resourcePath({ resource: 'pods', namespace: query.namespace, name: query.pod })}/log?${params}`)
-            truncated = typeof data === 'string' && (Buffer.byteLength(data) >= 31_000 || data.split('\n').length >= query.tailLines)
+            const params = new URLSearchParams({ container: query.container, previous: String(query.previous), sinceTime: query.sinceTime, tailLines: String(query.tailLines), timestamps: 'true' })
+            const log = await this.request(`${resourcePath({ resource: 'pods', namespace: query.namespace, name: query.pod })}/log?${params}`, 'GET', undefined, {}, LOG_READ_BYTES) as { text: string; cut: boolean }
+            data = log.text
+            // Reaching tailLines means earlier lines may exist; a trailing newline is not a line.
+            truncated = log.cut || log.text.replace(/\n$/, '').split('\n').length >= query.tailLines
             break
           }
           case 'list': {
@@ -207,12 +229,13 @@ export class KubernetesConnectorClient {
           }
         }
       }
-      const sanitized = sanitizeKubernetes(data)
+      // Only the reader fingerprints literal values: a writer's dry-run of a guessed value would otherwise compare against them.
+      const sanitized = sanitizeKubernetesResult(data, { fingerprints: this.mode === 'read' })
       truncated ||= kubernetesPayloadTruncated(data)
       return { observedAt: new Date().toISOString(), data: sanitized, truncated, error: null }
     } catch (error) {
       const status = error instanceof ApiFailure ? error.status : null
-      const kind = status === 403 || status === 401 ? 'forbidden' : status === 404 ? 'not_found' : status === 409 || status === 410 || status === 422 ? 'conflict' : status === 429 ? 'throttled' : mutationStarted && (!status || status >= 500) ? 'ambiguous' : status || error instanceof ResponseTooLarge ? 'unavailable' : 'invalid'
+      const kind = status === 403 || status === 401 ? 'forbidden' : status === 404 ? 'not_found' : status === 409 || status === 410 || status === 422 ? 'conflict' : status === 429 ? 'throttled' : mutationStarted && (!status || status >= 500) ? 'ambiguous' : status || error instanceof ResponseTooLarge || error instanceof TransportFailure ? 'unavailable' : 'invalid'
       return { observedAt: new Date().toISOString(), data: null, truncated: false, error: kind }
     }
   }

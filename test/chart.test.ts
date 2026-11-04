@@ -10,11 +10,11 @@ const base = {
   namespaces: ['checkout', 'billing'], clusterResources: false, image: { digest: 'sha256:' + 'a'.repeat(64) }, existingSecret: 'ace-read-00000000',
 }
 type K8sObject = { kind: string; metadata: { name: string; namespace?: string }; [key: string]: any }
-function helm(values: object) {
-  return spawnSync('helm', ['template', 'connector', chart, '--namespace', 'ace-connectors', '--values', '-'], { input: JSON.stringify(values), encoding: 'utf8' })
+function helm(values: object, extra: string[] = []) {
+  return spawnSync('helm', ['template', 'connector', chart, '--namespace', 'ace-connectors', '--values', '-', ...extra], { input: JSON.stringify(values), encoding: 'utf8' })
 }
-function render(values: object): K8sObject[] {
-  const result = helm(values)
+function render(values: object, extra: string[] = []): K8sObject[] {
+  const result = helm(values, extra)
   if (result.status !== 0) throw new Error(result.stderr)
   return parseAllDocuments(result.stdout).map(document => document.toJSON()).filter(Boolean)
 }
@@ -25,8 +25,27 @@ describe('Helm chart', () => {
     expect(execFileSync('helm', ['version', '--short'], { encoding: 'utf8' })).toMatch(/^v[34]\./)
   })
 
+  it('by default lets the reader read every namespace and cluster-scoped objects, never Secrets, and keeps a writer in its namespaces', () => {
+    const { clusterResources: _, ...unset } = base
+    const reader = render(unset)
+    const namespaced = reader.find(item => item.kind === 'ClusterRole' && item.metadata.name === 'ace-read-00000000-namespaces')!
+    const grants = (role: K8sObject) => role.rules.flatMap((rule: { apiGroups: string[]; resources: string[]; verbs: string[] }) => { expect(rule.verbs).toEqual(['get', 'list']); return rule.apiGroups.flatMap(group => rule.resources.map(resource => `${group}/${resource}`)) })
+    expect(grants(namespaced)).not.toContain('/secrets')
+    expect(grants(namespaced)).toContain('/pods/log')
+    expect(grants(reader.find(item => item.kind === 'ClusterRole' && item.metadata.name === 'ace-read-00000000')!)).toContain('admissionregistration.k8s.io/mutatingwebhookconfigurations')
+    expect(reader.find(item => item.kind === 'Deployment')!.spec.template.spec.containers[0].env).toEqual(expect.arrayContaining([{ name: 'ACE_ALL_NAMESPACES', value: 'true' }, { name: 'ACE_CLUSTER_RESOURCES', value: 'true' }]))
+    const writer = render({ ...unset, mode: 'write', existingSecret: 'ace-write-00000000' })
+    expect(writer.filter(item => item.kind === 'Role').map(role => role.metadata.namespace)).toEqual(['checkout', 'billing'])
+    expect(writer.filter(item => item.kind === 'ClusterRole').map(role => role.metadata.name)).toEqual(['ace-write-00000000-identity'])
+    expect(helm({ ...unset, mode: 'write', existingSecret: 'ace-write-00000000', allNamespaces: true }).status).not.toBe(0)
+    // Upgrading an existing reader without explicit values never widens it.
+    const upgraded = render(unset, ['--is-upgrade'])
+    expect(upgraded.filter(item => item.kind === 'ClusterRole').map(role => role.metadata.name)).toEqual(['ace-read-00000000-identity'])
+    expect(upgraded.filter(item => item.kind === 'Role').map(role => role.metadata.namespace)).toEqual(['checkout', 'billing'])
+  })
+
   it('grants the reader get/list on every supported namespaced resource except Secrets', () => {
-    const roles = render(base).filter(item => item.kind === 'Role')
+    const roles = render({ ...base, allNamespaces: false }).filter(item => item.kind === 'Role')
     expect(roles.map(role => role.metadata.namespace)).toEqual(['checkout', 'billing'])
     const expected = Object.entries(kubernetesResources).filter(([resource, spec]) => spec.namespaced && resource !== 'secrets').map(([resource, spec]) => `${groupOf(spec.api)}/${resource}`)
     for (const role of roles) {
@@ -36,7 +55,7 @@ describe('Helm chart', () => {
       })
       expect(granted.sort()).toEqual([...expected, '/pods/log'].sort())
     }
-    expect(render(base).some(item => item.kind === 'ClusterRole' && item.metadata.name === 'ace-read-00000000')).toBe(false)
+    expect(render({ ...base, allNamespaces: false }).some(item => item.kind === 'ClusterRole' && ['ace-read-00000000', 'ace-read-00000000-namespaces'].includes(item.metadata.name))).toBe(false)
   })
 
   it('grants cluster-scoped reads only when requested', () => {

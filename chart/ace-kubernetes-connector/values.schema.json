@@ -8,7 +8,6 @@
     "apiUrl",
     "clusterName",
     "namespaces",
-    "clusterResources",
     "image"
   ],
   "properties": {
@@ -45,7 +44,10 @@
       }
     },
     "clusterResources": {
-      "type": "boolean"
+      "type": ["boolean", "null"]
+    },
+    "allNamespaces": {
+      "type": ["boolean", "null"]
     },
     "image": {
       "type": "object",

@@ -13,6 +13,21 @@
   namespace: {{ .Release.Namespace }}
 {{- end -}}
 
+{{/*
+Effective scope. A reader newly installed reads the whole cluster unless told otherwise; an upgrade without an
+explicit value keeps the narrower scope it had, so no existing reader widens silently. A writer acts only where it is told.
+*/}}
+{{- define "connector.allNamespaces" -}}
+{{- if and (eq .Values.mode "write") (eq (toString .Values.allNamespaces) "true") -}}
+{{- fail "allNamespaces applies to the reader only; the writer acts in the selected namespaces." -}}
+{{- end -}}
+{{- if kindIs "invalid" .Values.allNamespaces -}}{{- and (eq .Values.mode "read") .Release.IsInstall -}}{{- else -}}{{- and (eq .Values.mode "read") (eq (toString .Values.allNamespaces) "true") -}}{{- end -}}
+{{- end -}}
+
+{{- define "connector.clusterResources" -}}
+{{- if kindIs "invalid" .Values.clusterResources -}}{{- and (eq .Values.mode "read") .Release.IsInstall -}}{{- else -}}{{- eq (toString .Values.clusterResources) "true" -}}{{- end -}}
+{{- end -}}
+
 {{- define "connector.validate" -}}
 {{- if and .Values.token .Values.existingSecret -}}
 {{- fail "Set either existingSecret or token, not both." -}}
