@@ -29,3 +29,24 @@ it('delivers delete preconditions so a replaced object is never deleted', async 
   expect(received).toEqual([{ apiVersion: 'v1', kind: 'DeleteOptions', propagationPolicy: 'Foreground', preconditions: { uid: 'replaced-uid', resourceVersion: '7' } }])
   expect(result.error).toBe('conflict')
 })
+
+it('does not delete anything on a dry run', async () => {
+  const deleted: string[] = []
+  const server = createServer(async (request, response) => {
+    const text = await body(request)
+    // Mirrors the API server: a DELETE with a body takes its options only from that body, so a dryRun query is ignored.
+    const dryRun = text ? JSON.parse(text).dryRun?.includes('All') : new URL(request.url!, 'http://api').searchParams.get('dryRun') === 'All'
+    if (!dryRun) deleted.push(request.url!)
+    response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ kind: 'Status', status: 'Success' }))
+  })
+  servers.push(server)
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const kube = new KubeConfig()
+  kube.loadFromOptions({ clusters: [{ name: 'test', server: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, skipTLSVerify: true }], users: [{ name: 'test' }], contexts: [{ name: 'test', cluster: 'test', user: 'test' }], currentContext: 'test' })
+  const client = new KubernetesConnectorClient(kube, { clusterName: 'test', namespaces: ['shop'], clusterResources: false }, 'write')
+  const mutation = { operation: 'delete' as const, ref: { resource: 'configmaps' as const, namespace: 'shop', name: 'settings' }, uid: 'current-uid', resourceVersion: '7' }
+  expect((await client.run({ mode: 'write', dryRun: true, mutation })).error).toBeNull()
+  expect(deleted).toEqual([])
+  expect((await client.run({ mode: 'write', dryRun: false, mutation })).error).toBeNull()
+  expect(deleted).toHaveLength(1)
+})

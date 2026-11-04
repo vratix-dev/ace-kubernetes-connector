@@ -66,8 +66,9 @@ export class KubernetesConnectorClient {
         ...mutation.patch,
       ], { 'Content-Type': 'application/json-patch+json' })
     }
-    if (mutation.operation === 'delete') return this.request(path + suffix, 'DELETE', {
-      apiVersion: 'v1', kind: 'DeleteOptions', propagationPolicy: 'Foreground',
+    // The API server reads a DELETE's options only from its body when it has one, ignoring a dryRun query.
+    if (mutation.operation === 'delete') return this.request(path, 'DELETE', {
+      apiVersion: 'v1', kind: 'DeleteOptions', propagationPolicy: 'Foreground', ...(command.dryRun ? { dryRun: ['All'] } : {}),
       preconditions: { uid: mutation.uid, resourceVersion: mutation.resourceVersion },
     }, { 'Content-Type': 'application/json' })
     if (mutation.operation === 'evict') return this.request(`${path}/eviction${suffix}`, 'POST', {
