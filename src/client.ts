@@ -5,6 +5,8 @@ import { Exec, KubeConfig } from '@kubernetes/client-node'
 import { assertConnectorScope, customResources, kubernetesResources, resourcePath, type ConnectorHeartbeat, type ConnectorResult, type ConnectorScope, type CustomResource, type KubernetesCommand } from './protocol'
 import { sanitizeKubernetes, kubernetesPayloadTruncated } from './sanitize'
 
+type PodTemplate = { metadata?: { labels?: Record<string, string> }; $patch?: unknown }
+
 class ApiFailure extends Error {
   constructor(readonly status: number) { super(`Kubernetes API returned ${status}.`) }
 }
@@ -59,18 +61,48 @@ export class KubernetesConnectorClient {
     const mutation = command.mutation
     const path = resourcePath(mutation.ref)
     const suffix = command.dryRun ? '?dryRun=All' : ''
+    // Status updates move resourceVersion constantly during an incident; generation moves only when the spec does.
+    const pin = (target: { resourceVersion: string; generation?: number }) => target.generation === undefined
+      ? { op: 'test', path: '/metadata/resourceVersion', value: target.resourceVersion }
+      : { op: 'test', path: '/metadata/generation', value: target.generation }
     if (mutation.operation === 'patch') {
       return this.request(path + (mutation.subresource ? `/${mutation.subresource}` : '') + suffix, 'PATCH', [
         { op: 'test', path: '/metadata/uid', value: mutation.uid },
-        { op: 'test', path: '/metadata/resourceVersion', value: mutation.resourceVersion },
+        pin(mutation),
         ...mutation.patch,
       ], { 'Content-Type': 'application/json-patch+json' })
     }
     // The API server reads a DELETE's options only from its body when it has one, ignoring a dryRun query.
-    if (mutation.operation === 'delete') return this.request(path, 'DELETE', {
-      apiVersion: 'v1', kind: 'DeleteOptions', propagationPolicy: 'Foreground', ...(command.dryRun ? { dryRun: ['All'] } : {}),
-      preconditions: { uid: mutation.uid, resourceVersion: mutation.resourceVersion },
-    }, { 'Content-Type': 'application/json' })
+    if (mutation.operation === 'delete') {
+      // A pod's status changes constantly and its UID is its identity; anything else keeps a version precondition.
+      let resourceVersion: string | undefined = mutation.ref.resource === 'pods' ? undefined : mutation.resourceVersion
+      if (mutation.generation !== undefined && mutation.ref.resource !== 'pods') {
+        const current = await this.request(path) as { metadata: { uid: string; resourceVersion: string; generation?: number } }
+        if (current.metadata.uid !== mutation.uid || current.metadata.generation !== mutation.generation) throw new ApiFailure(409)
+        resourceVersion = current.metadata.resourceVersion
+      }
+      return this.request(path, 'DELETE', {
+        apiVersion: 'v1', kind: 'DeleteOptions', propagationPolicy: 'Foreground', ...(command.dryRun ? { dryRun: ['All'] } : {}),
+        preconditions: { uid: mutation.uid, ...(resourceVersion ? { resourceVersion } : {}) },
+      }, { 'Content-Type': 'application/json' })
+    }
+    if (mutation.operation === 'restore_revision') {
+      const source = await this.request(resourcePath({ resource: mutation.source.resource, namespace: mutation.ref.namespace, name: mutation.source.name })) as {
+        metadata: { uid: string; ownerReferences?: Array<{ uid: string }> }; spec?: { template?: PodTemplate }; data?: { spec?: { template?: PodTemplate } }
+      }
+      // A revision is restored only into the workload that owns it.
+      if (source.metadata.uid !== mutation.source.uid || !source.metadata.ownerReferences?.some(owner => owner.uid === mutation.uid)) throw new ApiFailure(409)
+      const template = structuredClone(mutation.source.resource === 'replicasets' ? source.spec?.template : source.data?.spec?.template)
+      if (!template) throw new ApiFailure(422)
+      // The controller adds its hash label to each ReplicaSet's copy; kubectl rollout undo removes it too.
+      delete template.metadata?.labels?.[mutation.ref.resource === 'rollouts' ? 'rollouts-pod-template-hash' : 'pod-template-hash']
+      delete template.$patch
+      return this.request(path + suffix, 'PATCH', [
+        { op: 'test', path: '/metadata/uid', value: mutation.uid },
+        pin(mutation),
+        { op: 'replace', path: '/spec/template', value: template },
+      ], { 'Content-Type': 'application/json-patch+json' })
+    }
     if (mutation.operation === 'evict') return this.request(`${path}/eviction${suffix}`, 'POST', {
       apiVersion: 'policy/v1', kind: 'Eviction', metadata: { name: mutation.ref.name, namespace: mutation.ref.namespace },
       deleteOptions: { preconditions: { uid: mutation.uid } },

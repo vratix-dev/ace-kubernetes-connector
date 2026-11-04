@@ -59,8 +59,10 @@ export type KubernetesRead = z.infer<typeof kubernetesReadSchema>
 const patch = z.object({ op: z.enum(['add', 'remove', 'replace', 'test']), path: z.string().min(1).max(500).startsWith('/'), value: z.unknown().optional() }).strict().refine(item => item.op === 'remove' || Object.hasOwn(item, 'value'), 'This patch operation requires a value.')
 export const kubernetesMutationSchema = z.discriminatedUnion('operation', [
   // subresource "status" patches the status of a resource whose CRD enables it (an Argo Rollout's abort or promote).
-  z.object({ operation: z.literal('patch'), ref: kubernetesRefSchema, uid: z.string().min(1).max(200), resourceVersion: z.string().min(1).max(200), patch: z.array(patch).min(1).max(40), subresource: z.literal('status').optional() }).strict(),
-  z.object({ operation: z.literal('delete'), ref: kubernetesRefSchema, uid: z.string().min(1).max(200), resourceVersion: z.string().min(1).max(200) }).strict(),
+  z.object({ operation: z.literal('patch'), ref: kubernetesRefSchema, uid: z.string().min(1).max(200), resourceVersion: z.string().min(1).max(200), generation: z.number().int().nonnegative().optional(), patch: z.array(patch).min(1).max(40), subresource: z.literal('status').optional() }).strict(),
+  z.object({ operation: z.literal('delete'), ref: kubernetesRefSchema, uid: z.string().min(1).max(200), resourceVersion: z.string().min(1).max(200), generation: z.number().int().nonnegative().optional() }).strict(),
+  // Rolls a workload back to a revision it retains. The connector reads the template in the cluster, so values Ace cannot see are restored exactly and never leave it.
+  z.object({ operation: z.literal('restore_revision'), ref: kubernetesRefSchema, uid: z.string().min(1).max(200), resourceVersion: z.string().min(1).max(200), generation: z.number().int().nonnegative().optional(), source: z.object({ resource: z.enum(['replicasets', 'controllerrevisions']), name, uid: z.string().min(1).max(200) }).strict() }).strict(),
   z.object({ operation: z.literal('create'), ref: kubernetesRefSchema, manifest: z.record(z.string(), z.unknown()) }).strict(),
   // The Eviction API: the API server refuses (429) an eviction a PodDisruptionBudget does not allow.
   z.object({ operation: z.literal('evict'), ref: kubernetesRefSchema.extend({ resource: z.literal('pods'), namespace: name }), uid: z.string().min(1).max(200) }).strict(),
