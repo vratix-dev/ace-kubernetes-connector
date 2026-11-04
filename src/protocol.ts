@@ -36,7 +36,15 @@ export const kubernetesResources = {
   clusterrolebindings: { api: 'rbac.authorization.k8s.io/v1', namespaced: false },
   mutatingwebhookconfigurations: { api: 'admissionregistration.k8s.io/v1', namespaced: false },
   validatingwebhookconfigurations: { api: 'admissionregistration.k8s.io/v1', namespaced: false },
+  // Allowlisted custom resources: GitOps controllers and progressive delivery. Absent when their CRD is not installed.
+  applications: { api: 'argoproj.io/v1alpha1', namespaced: true },
+  rollouts: { api: 'argoproj.io/v1alpha1', namespaced: true },
+  kustomizations: { api: 'kustomize.toolkit.fluxcd.io/v1', namespaced: true },
+  helmreleases: { api: 'helm.toolkit.fluxcd.io/v2', namespaced: true },
 } as const
+/** The custom resources above, each reported as a capability only when its API is served by the cluster. */
+export const customResources = ['applications', 'rollouts', 'kustomizations', 'helmreleases'] as const
+export type CustomResource = (typeof customResources)[number]
 export const kubernetesResourceSchema = z.enum(Object.keys(kubernetesResources) as [keyof typeof kubernetesResources, ...Array<keyof typeof kubernetesResources>])
 export const kubernetesRefSchema = z.object({ resource: kubernetesResourceSchema, namespace: name.nullable(), name }).strict()
 export type KubernetesRef = z.infer<typeof kubernetesRefSchema>
@@ -44,15 +52,20 @@ export const kubernetesReadSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('list'), resource: kubernetesResourceSchema, namespace: name.nullable(), selector: z.string().max(500).optional(), continueToken: z.string().max(4096).optional(), limit: z.number().int().min(1).max(200).default(100) }).strict(),
   z.object({ operation: z.literal('get'), ref: kubernetesRefSchema }).strict(),
   z.object({ operation: z.literal('logs'), namespace: name, pod: name, container: name, previous: z.boolean().default(false), sinceTime: z.string().datetime({ offset: true }), tailLines: z.number().int().min(1).max(300).default(150) }).strict(),
-  z.object({ operation: z.literal('access'), resource: kubernetesResourceSchema, namespace: name.nullable(), verb: z.enum(['get', 'list', 'patch', 'create', 'delete']), subresource: z.literal('exec').optional() }).strict(),
+  z.object({ operation: z.literal('access'), resource: kubernetesResourceSchema, namespace: name.nullable(), verb: z.enum(['get', 'list', 'patch', 'create', 'delete']), subresource: z.enum(['exec', 'eviction', 'status']).optional() }).strict(),
   z.object({ operation: z.literal('identity') }).strict(),
 ])
 export type KubernetesRead = z.infer<typeof kubernetesReadSchema>
 const patch = z.object({ op: z.enum(['add', 'remove', 'replace', 'test']), path: z.string().min(1).max(500).startsWith('/'), value: z.unknown().optional() }).strict().refine(item => item.op === 'remove' || Object.hasOwn(item, 'value'), 'This patch operation requires a value.')
 export const kubernetesMutationSchema = z.discriminatedUnion('operation', [
-  z.object({ operation: z.literal('patch'), ref: kubernetesRefSchema, uid: z.string().min(1).max(200), resourceVersion: z.string().min(1).max(200), patch: z.array(patch).min(1).max(40) }).strict(),
-  z.object({ operation: z.literal('delete'), ref: kubernetesRefSchema, uid: z.string().min(1).max(200), resourceVersion: z.string().min(1).max(200) }).strict(),
+  // subresource "status" patches the status of a resource whose CRD enables it (an Argo Rollout's abort or promote).
+  z.object({ operation: z.literal('patch'), ref: kubernetesRefSchema, uid: z.string().min(1).max(200), resourceVersion: z.string().min(1).max(200), generation: z.number().int().nonnegative().optional(), patch: z.array(patch).min(1).max(40), subresource: z.literal('status').optional() }).strict(),
+  z.object({ operation: z.literal('delete'), ref: kubernetesRefSchema, uid: z.string().min(1).max(200), resourceVersion: z.string().min(1).max(200), generation: z.number().int().nonnegative().optional() }).strict(),
+  // Rolls a workload back to a revision it retains. The connector reads the template in the cluster, so values Ace cannot see are restored exactly and never leave it.
+  z.object({ operation: z.literal('restore_revision'), ref: kubernetesRefSchema, uid: z.string().min(1).max(200), resourceVersion: z.string().min(1).max(200), generation: z.number().int().nonnegative().optional(), source: z.object({ resource: z.enum(['replicasets', 'controllerrevisions']), name, uid: z.string().min(1).max(200) }).strict() }).strict(),
   z.object({ operation: z.literal('create'), ref: kubernetesRefSchema, manifest: z.record(z.string(), z.unknown()) }).strict(),
+  // The Eviction API: the API server refuses (429) an eviction a PodDisruptionBudget does not allow.
+  z.object({ operation: z.literal('evict'), ref: kubernetesRefSchema.extend({ resource: z.literal('pods'), namespace: name }), uid: z.string().min(1).max(200) }).strict(),
   z.object({ operation: z.literal('exec'), ref: kubernetesRefSchema.extend({ resource: z.literal('pods'), namespace: name }), uid: z.string().min(1).max(200), container: name, argv: z.array(z.string().min(1).max(4000)).min(1).max(30) }).strict(),
 ])
 export type KubernetesMutation = z.infer<typeof kubernetesMutationSchema>
@@ -63,10 +76,14 @@ export const kubernetesCommandSchema = z.discriminatedUnion('mode', [
 export type KubernetesCommand = z.infer<typeof kubernetesCommandSchema>
 export const connectorScopeSchema = z.object({
   clusterName: name,
-  namespaces: z.array(name).min(1).max(50),
+  /** Namespaces the connector is limited to when it does not cover every namespace; Secrets are read only in these. */
+  namespaces: z.array(name).max(50),
   clusterResources: z.boolean().default(false),
+  /** The connector reads, or for a writer changes, every namespace; Secrets are never read outside `namespaces` or changed. */
+  allNamespaces: z.boolean().default(false),
 }).strict()
-export type ConnectorScope = z.infer<typeof connectorScopeSchema>
+/** As given: unset flags take their defaults. */
+export type ConnectorScope = z.input<typeof connectorScopeSchema>
 export const connectorResultSchema = z.object({
   observedAt: z.string().datetime({ offset: true }),
   data: z.unknown(),
@@ -74,6 +91,17 @@ export const connectorResultSchema = z.object({
   error: z.enum(['forbidden', 'not_found', 'conflict', 'throttled', 'unavailable', 'invalid', 'ambiguous']).nullable(),
 }).strict()
 export type ConnectorResult = z.infer<typeof connectorResultSchema>
+
+/**
+ * What this connector can do, sent with every poll and required by Ace. A writer reports eviction and status patches.
+ * Custom resources are reported by name when the cluster serves their API; Ace answers for a command on one that is not.
+ */
+export const connectorFeatures = ['eviction', 'status_patch', ...customResources] as const
+export const connectorHeartbeatSchema = z.object({
+  version: z.string().regex(/^\d+\.\d+\.\d+$/),
+  features: z.array(z.enum(connectorFeatures)).max(20),
+}).strict()
+export type ConnectorHeartbeat = z.infer<typeof connectorHeartbeatSchema>
 
 export function resourcePath(ref: { resource: keyof typeof kubernetesResources; namespace: string | null; name?: string }): string {
   const spec = kubernetesResources[ref.resource]
@@ -88,7 +116,9 @@ export function assertConnectorScope(command: KubernetesCommand, scope: Connecto
   if (query.operation === 'identity') return
   const namespace = 'ref' in query ? query.ref.namespace : query.namespace
   const resource = query.operation === 'logs' ? 'pods' : 'ref' in query ? query.ref.resource : query.resource
-  if (namespace ? !scope.namespaces.includes(namespace) : !scope.clusterResources) throw new Error('The request is outside the connector scope.')
+  // Secrets stay in the selected namespaces even for a cluster-wide connector.
+  const covered = (name: string) => scope.namespaces.includes(name) || Boolean(scope.allNamespaces) && resource !== 'secrets'
+  if (namespace ? !covered(namespace) : !scope.clusterResources) throw new Error('The request is outside the connector scope.')
   if (kubernetesResources[resource].namespaced !== Boolean(namespace)) throw new Error('A concrete namespace is required for namespaced resources.')
   if (command.mode === 'write' && resource === 'secrets') throw new Error('The connector does not mutate Secrets.')
 }

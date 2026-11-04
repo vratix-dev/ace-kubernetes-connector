@@ -26,6 +26,7 @@ jobs:
           test "$(jq -r .version package.json)" = "$version"
           test "$(yq .version chart/ace-kubernetes-connector/Chart.yaml)" = "$version"
           test "$(yq .appVersion chart/ace-kubernetes-connector/Chart.yaml)" = "$version"
+          grep -q "connectorVersion = '$version'" src/client.ts
       - id: image
         shell: bash
         run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
