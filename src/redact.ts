@@ -1,6 +1,6 @@
 const REDACTED = "[REDACTED]"
 
-const SECRET_KEY =
+export const SECRET_KEY =
   String.raw`password|passwd|pwd|secret(?:_?key)?|token|api[_-]?key|authorization|cookie|set-cookie|session[_-]?id|client[_-]?secret|private[_-]?key|access[_-]?key(?:[_-]?id)?|secret[_-]?access[_-]?key|refresh[_-]?token|identity[_-]?token|signing[_-]?secret`
 
 const KEY_VALUE_SECRET = new RegExp(

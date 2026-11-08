@@ -71,7 +71,9 @@ spec:
             - name: ACE_NAMESPACES
               value: {{ join "," .Values.namespaces | quote }}
             - name: ACE_CLUSTER_RESOURCES
-              value: {{ .Values.clusterResources | toString | quote }}
+              value: {{ include "connector.clusterResources" . | quote }}
+            - name: ACE_ALL_NAMESPACES
+              value: {{ include "connector.allNamespaces" . | quote }}
             - name: ACE_CONNECTOR_TOKEN_FILE
               value: /var/run/ace/token
             - name: TSX_DISABLE_CACHE
